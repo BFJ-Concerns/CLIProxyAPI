@@ -147,7 +147,16 @@ access:
 
 # Routing strategy for selecting credentials when multiple match.
 routing:
-  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first
+  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first, quota-aware
+  # quota-aware (fork addition) routes Claude subscription (OAuth) credentials by their
+  # polled usage windows: Fable-class requests go to the eligible account whose weekly
+  # window resets soonest; other requests go to the account with unreserved weekly
+  # headroom whose weekly window resets soonest. Other credentials keep upstream routing.
+  # quota:
+  #   fable-weekly-ratio: 0.5   # weekly points reserved per point of Fable headroom
+  #   reserve-margin: 10        # extra reserved weekly percentage points
+  #   session-ceiling: 95       # skip accounts at/above this 5h-window utilisation
+  #   fable-model-prefixes: ["claude-fable"] # model prefixes counted as Fable-class
   # weighted-round-robin uses each credential's integer weight (default 1, maximum 1,000,000).
   # Non-positive weights exclude the credential while this strategy is active.
   # For OAuth/file credentials, add a top-level numeric "weight" field to the auth JSON.

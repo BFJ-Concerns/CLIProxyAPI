@@ -304,6 +304,9 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		}
 		if s.coreManager != nil {
 			s.coreManager.StopAutoRefresh()
+			// Fork addition (quota-aware routing): unwire the usage
+			// poller; the affinity wrapper's Stop does not reach it.
+			coreauth.BindQuotaPoller(s.coreManager, nil)
 		}
 		if s.watcher != nil {
 			if err := s.watcher.Stop(); err != nil {
