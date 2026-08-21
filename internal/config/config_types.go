@@ -601,6 +601,10 @@ type RoutingConfig struct {
 	//     keep the binding and return the error (or retry the same credential) instead.
 	// Ignored when SessionAffinity is false.
 	SessionAffinityRebindOn string `yaml:"session-affinity-rebind-on,omitempty" json:"session-affinity-rebind-on,omitempty"`
+
+	// Quota configures the "quota-aware" strategy (fork addition; see
+	// routing_quota.go).
+	Quota QuotaRoutingConfig `yaml:"quota,omitempty" json:"quota,omitempty"`
 }
 
 // OAuthModelAlias defines a model ID alias for a specific channel.
