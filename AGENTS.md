@@ -1,63 +1,100 @@
 # AGENTS.md
 
-Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs with OAuth and round-robin load balancing.
+Fork of [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI):
+a Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs
+with OAuth and load balancing across credentials. Project intent and planning
+live in the sibling annexe repo (`../CLIProxyAPI-Annexe`;
+`BFJ-Concerns/CLIProxyAPI-Annexe` on Forgejo) — its `README.md` is the
+contract for what this fork is.
 
-## Repository
-- GitHub: https://github.com/router-for-me/CLIProxyAPI
+## Fork discipline
+
+- `main` mirrors upstream exactly — never commit to it. All fork work lands
+  on `patches`, which is rebased onto upstream releases.
+- The fork is a minimal additive patch. Touch upstream code only at the seams
+  a change genuinely needs; put new behaviour in new files; integrate through
+  upstream's own interfaces rather than copying upstream logic into fork
+  files.
+- Never reformat, refactor, translate comments in, or otherwise "improve"
+  upstream code a change did not need to touch. Upstream code is not brought
+  to any house standard — every gratuitous divergence is a future rebase
+  conflict. This deliberately overrides any convention, here or in other
+  loaded guidance, that would have you clean up code you pass through.
 
 ## Commands
+
 ```bash
-gofmt -w . # Format (required after Go changes)
-go build -o cli-proxy-api ./cmd/server # Build
-go run ./cmd/server # Run dev server
-go test ./... # Run all tests
-go test -v -run TestName ./path/to/pkg # Run single test
-go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRED after changes)
+gofmt -w .                                        # Format (required after Go changes)
+go build -o cli-proxy-api ./cmd/server            # Build
+go run ./cmd/server                               # Run dev server
+go test ./...                                     # Run all tests
+go test -v -run TestName ./path/to/pkg            # Run single test
+go build -o test-output ./cmd/server && rm test-output  # Verify compile (REQUIRED after changes)
 ```
+
 - Common flags: `--config <path>`, `--tui`, `--standalone`, `--local-model`, `--no-browser`, `--oauth-callback-port <port>`
 
 ## Config
+
 - Default config: `config.yaml` (template: `config.example.yaml`)
 - `.env` is auto-loaded from the working directory
 - Auth material defaults under `auths/`
 - Storage backends: file-based default; optional Postgres/git/object store (`PGSTORE_*`, `GITSTORE_*`, `OBJECTSTORE_*`)
 
 ## Architecture
+
 - `cmd/server/` — Server entrypoint
 - `internal/api/` — Gin HTTP API (routes, middleware, modules)
-- `internal/api/modules/amp/` — Amp integration (Amp-style routes + reverse proxy)
-- `internal/thinking/` — Main thinking/reasoning pipeline. `ApplyThinking()` (apply.go) parses suffixes (`suffix.go`, suffix overrides body), normalizes config to canonical `ThinkingConfig` (`types.go`), normalizes and validates centrally (`validate.go`/`convert.go`), then applies provider-specific output via `ProviderApplier`. Do not break this "canonical representation → per-provider translation" architecture.
-- `internal/runtime/executor/` — Per-provider runtime executors (incl. Codex WebSocket)
-- `internal/translator/` — Provider protocol translators (and shared `common`)
-- `internal/registry/` — Model registry + remote updater (`StartModelsUpdater`); `--local-model` disables remote updates
+- `internal/thinking/` — Thinking/reasoning pipeline: suffix parsing →
+  canonical `ThinkingConfig` → central validation → per-provider output via
+  `ProviderApplier`. Do not break the "canonical representation →
+  per-provider translation" architecture.
+- `internal/runtime/executor/` — Per-provider runtime executors (incl. Codex
+  WebSocket). Executors and their unit tests only; helper files go under
+  `internal/runtime/executor/helps/`.
+- `internal/translator/` — Provider protocol translators
+- `internal/registry/` — Model registry + remote updater; `--local-model`
+  disables remote updates
 - `internal/store/` — Storage implementations and secret resolution
-- `internal/managementasset/` — Config snapshots and management assets
-- `internal/cache/` — Request signature caching
-- `internal/watcher/` — Config hot-reload and watchers
-- `internal/wsrelay/` — WebSocket relay sessions
+- `internal/watcher/` — Config hot-reload
 - `internal/usage/` — Usage and token accounting
 - `internal/home/` — CLIProxyAPIHome control plane integration (bootstrap, RESP communication, dispatch coordination)
 - `internal/tui/` — Bubbletea terminal UI (`--tui`, `--standalone`)
-- `sdk/cliproxy/` — Embeddable SDK entry (service/builder/watchers/pipeline)
+- `sdk/cliproxy/` — Embeddable SDK entry (service/builder/watchers/pipeline);
+  credential selection strategies live in `sdk/cliproxy/auth/`
 - `test/` — Cross-module integration tests
 
-## Code Conventions
-- Keep changes small and simple (KISS)
-- Comments in English only
-- If editing code that already contains non-English comments, translate them to English (don’t add new non-English comments)
-- For user-visible strings, keep the existing language used in that file/area
-- New Markdown docs should be in English unless the file is explicitly language-specific (e.g. `README_CN.md`)
-- As a rule, do not make standalone changes to `internal/translator/`. You may modify it only as part of broader changes elsewhere.
-- If a task requires changing only `internal/translator/`, run `gh repo view --json viewerPermission -q .viewerPermission` to confirm you have `WRITE`, `MAINTAIN`, or `ADMIN`. If you do, you may proceed; otherwise, file a GitHub issue including the goal, rationale, and the intended implementation code, then stop further work.
-- `internal/runtime/executor/` should contain executors and their unit tests only. Place any helper/supporting files under `internal/runtime/executor/helps/`.
-- Payload configuration MUST be the final semantic barrier before sending requests in every executor, including streaming, WebSocket, continuation, retry/fallback, image, and token-count paths where applicable. Complete all built-in payload translation, normalization, injection, and cleanup first, then evaluate and apply user payload rules exactly once to the final business payload. No subsequent logic may overwrite configured values or restore filtered fields. Only necessary transport framing, serialization, signature calculation, and read-only validation may follow without changing business payload semantics. Add regression tests when introducing or changing request-building paths to enforce this ordering.
-- Follow `gofmt`; keep imports goimports-style; wrap errors with context where helpful
-- Do not use `log.Fatal`/`log.Fatalf` (terminates the process); prefer returning errors and logging via logrus
-- Shadowed variables: use method suffix (`errStart := server.Start()`)
-- Wrap defer errors: `defer func() { if err := f.Close(); err != nil { log.Errorf(...) } }()`
-- Use logrus structured logging; avoid leaking secrets/tokens in logs
-- Avoid panics in HTTP handlers; prefer logged errors and meaningful HTTP status codes
-- Timeouts are allowed only during credential acquisition; after an upstream connection is established, do not set timeouts for any subsequent network behavior. Intentional exceptions that must remain allowed are the Codex websocket liveness deadlines in `internal/runtime/executor/codex_websockets_executor.go`, the wsrelay session deadlines in `internal/wsrelay/session.go`, the management APICall timeout in `internal/api/handlers/management/api_tools.go`, and the `cmd/fetch_antigravity_models` utility timeouts
-- Avoid wall-clock `time.Sleep` in TTL, expiration, ordering, or cache-eviction unit tests due to platform timer granularity (e.g. Windows default timer resolution of ~15.6ms) and CI jitter under load; prefer controllable clocks (`nowFunc` / mock clock), explicit timestamp manipulation, or deterministic synchronization primitives.
-- Note: if modifying features that involve CLIProxyAPIHome, check if corresponding updates are needed in the CLIProxyAPIHome repository.
-- Endpoints under the `/v0/management` base URL are deprecated and no longer maintained. For any feature changes, do not modify endpoints under `/v0/management` unless necessary to fix compilation errors.
+## Upstream law
+
+Timeouts are allowed only during credential acquisition; once an upstream
+connection is established, no timeouts on any subsequent network behaviour.
+Intentional exceptions: the Codex websocket liveness deadlines
+(`internal/runtime/executor/codex_websockets_executor.go`), the wsrelay
+session deadlines (`internal/wsrelay/session.go`), the management APICall
+timeout (`internal/api/handlers/management/api_tools.go`), and the
+`cmd/fetch_antigravity_models` utility timeouts.
+
+Payload configuration is the final semantic barrier before every executor
+sends a request — streaming, WebSocket, continuation, retry/fallback, image,
+and token-count paths included. Finish all built-in translation,
+normalisation, injection, and cleanup first, then apply user payload rules
+exactly once; nothing afterwards may overwrite configured values or restore
+filtered fields. Add regression tests when changing request-building paths.
+
+Fork code follows upstream's Go idiom so it reads like the code around it:
+English comments; logrus structured logging that never leaks secrets or
+tokens; no `log.Fatal` and no panics in HTTP handlers; shadowed errors named
+for their call (`errStart := server.Start()`); close and cleanup errors
+logged rather than discarded.
+
+Unit tests for TTL, expiration, ordering, or cache eviction must not rely on
+wall-clock `time.Sleep` (platform timer granularity and CI jitter make them
+flaky); use controllable clocks (`nowFunc` / mock clock), explicit timestamp
+manipulation, or deterministic synchronisation primitives.
+
+Features that touch CLIProxyAPIHome (`internal/home/`) may need a matching
+change in the CLIProxyAPIHome repository; check before landing.
+
+Endpoints under `/v0/management` are deprecated upstream and no longer
+maintained; build management features on `/v8/management`, and touch `/v0`
+endpoints only where compilation requires it.
