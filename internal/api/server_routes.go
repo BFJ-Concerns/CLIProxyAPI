@@ -53,6 +53,14 @@ func (s *Server) setupRoutes() {
 	s.engine.GET("/healthz", healthzHandler)
 	s.engine.HEAD("/healthz", healthzHandler)
 
+	// Anthropic's API answers /api/hello with 200. Claude Code sends a HEAD
+	// there at every process start as a TCP/TLS pre-connect against
+	// ANTHROPIC_BASE_URL and discards the result, so when that URL is this
+	// proxy the route must exist or every start writes a 404 error log.
+	// Unauthenticated, like the upstream endpoint and /healthz.
+	s.engine.GET("/api/hello", healthzHandler)
+	s.engine.HEAD("/api/hello", healthzHandler)
+
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
