@@ -726,6 +726,25 @@ func TestHealthz(t *testing.T) {
 	})
 }
 
+func TestAPIHelloPreconnectRoute(t *testing.T) {
+	server := newTestServer(t)
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/hello", nil)
+			rr := httptest.NewRecorder()
+			server.engine.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("unexpected status code: got %d want %d; body=%s", rr.Code, http.StatusOK, rr.Body.String())
+			}
+			if method == http.MethodHead && rr.Body.Len() != 0 {
+				t.Fatalf("expected empty body for HEAD request, got %q", rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestHealthzAccessLogging(t *testing.T) {
 	server := newTestServer(t)
 	previousHome := home.Current()
