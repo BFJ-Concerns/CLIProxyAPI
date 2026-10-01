@@ -1,8 +1,9 @@
 // Fork addition (quota-aware routing): the per-credential usage poller.
 // It polls Anthropic's OAuth usage endpoint for every loaded Claude
 // subscription credential with that credential's own access token (kept
-// fresh by the manager's existing auto-refresh loop) and feeds the
-// selector's usage store. Polling is polite and adaptive: sparser when
+// fresh by the manager's existing auto-refresh loop), feeds the
+// selector's usage store, and reports every attempt to the optional
+// quota-reading sink (quota_readings.go). Polling is polite and adaptive: sparser when
 // every window is comfortable, denser as any window nears exhaustion,
 // never more than once per 60 seconds per account, honouring Retry-After
 // on 429 in full, and never abandoning a loaded credential. Schedule and
@@ -246,6 +247,7 @@ func (p *quotaUsagePoller) poll(auth *Auth, now time.Time) {
 	accessToken, _ := auth.Metadata["access_token"].(string)
 	if strings.TrimSpace(accessToken) == "" {
 		log.WithFields(log.Fields{"auth": auth.ID}).Debug("quota poll skipped: no access token in metadata")
+		reportQuotaReading(auth, QuotaReading{PolledAt: now, Failed: true, Err: "no access token in metadata"})
 		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
@@ -253,6 +255,7 @@ func (p *quotaUsagePoller) poll(auth *Auth, now time.Time) {
 	req, errRequest := http.NewRequestWithContext(p.ctx, http.MethodGet, quotaUsageEndpoint, nil)
 	if errRequest != nil {
 		log.WithFields(log.Fields{"auth": auth.ID, "error": errRequest.Error()}).Warn("quota poll request build failed")
+		reportQuotaReading(auth, QuotaReading{PolledAt: now, Failed: true, Err: errRequest.Error()})
 		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
@@ -263,6 +266,7 @@ func (p *quotaUsagePoller) poll(auth *Auth, now time.Time) {
 	resp, errDo := p.clientFor(auth.ProxyURL).Do(req)
 	if errDo != nil {
 		log.WithFields(log.Fields{"auth": auth.ID, "error": errDo.Error()}).Warn("quota poll failed; serving last known state")
+		reportQuotaReading(auth, QuotaReading{PolledAt: now, Failed: true, Err: errDo.Error()})
 		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
@@ -275,11 +279,13 @@ func (p *quotaUsagePoller) poll(auth *Auth, now time.Time) {
 	if resp.StatusCode == http.StatusTooManyRequests {
 		retryAt := quotaRetryAt(resp.Header, now)
 		log.WithFields(log.Fields{"auth": auth.ID, "retry_at": retryAt.Format(time.RFC3339)}).Info("quota poll throttled; honouring Retry-After")
+		reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Throttled: true, RetryAt: retryAt})
 		p.finish(auth.ID, now, retryAt, false)
 		return
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		log.WithFields(log.Fields{"auth": auth.ID, "status": resp.StatusCode}).Warn("quota poll returned non-success; serving last known state")
+		reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Failed: true})
 		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
@@ -287,16 +293,19 @@ func (p *quotaUsagePoller) poll(auth *Auth, now time.Time) {
 	body, errRead := io.ReadAll(resp.Body)
 	if errRead != nil {
 		log.WithFields(log.Fields{"auth": auth.ID, "error": errRead.Error()}).Warn("quota poll read failed; serving last known state")
+		reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Failed: true, Err: errRead.Error()})
 		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
 	usage, errParse := parseClaudeUsageResponse(body, time.Now())
 	if errParse != nil {
 		log.WithFields(log.Fields{"auth": auth.ID, "error": errParse.Error()}).Warn("quota poll parse failed; serving last known state")
+		reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Failed: true, Err: errParse.Error(), Body: body})
 		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
 	p.store.Set(auth.ID, usage)
+	reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Body: body})
 	log.Infof(
 		"quota usage polled auth=%s session=%s weekly=%s fable=%s",
 		auth.ID,

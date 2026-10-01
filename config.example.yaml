@@ -1218,6 +1218,15 @@ observability:
     # Default: 60. Max: 3600.
     redis-usage-queue-retention-seconds: 60
 
+    # Durable spool of per-request usage records and per-account quota readings,
+    # read with GET /v8/management/observability/usage/spool and cleared with
+    # POST /v8/management/observability/usage/spool/ack. Usage records are spooled
+    # only while usage-statistics-enabled is true. Changes apply on restart.
+    # spool:
+    #   enabled: true
+    #   dir: "usage-spool"     # relative to this file's directory
+    #   retention-days: 14     # unacknowledged records older than this are dropped
+
   # Enable pprof HTTP debug server (host:port). Keep it bound to localhost for safety.
   pprof:
     enable: false
