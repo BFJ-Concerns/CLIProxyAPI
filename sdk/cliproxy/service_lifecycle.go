@@ -57,6 +57,7 @@ func (s *Service) Run(ctx context.Context) error {
 	s.startModelCatalogUpdaters(ctx)
 
 	usage.StartDefault(ctx)
+	s.startUsageSpool()
 	cfg := s.currentConfig()
 	homeEnabled := cfg != nil && cfg.Home.Enabled
 	if homeEnabled {
@@ -404,6 +405,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 
 		helps.RetireProxyPoolPublisher(s.proxyPoolPublisher)
 		usage.StopDefault()
+		s.stopUsageSpool()
 	})
 	return shutdownErr
 }
