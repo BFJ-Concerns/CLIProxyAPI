@@ -173,6 +173,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 	if err != nil {
 		return
 	}
+	tapUsageSpool(record, payload)
 	Enqueue(payload)
 }
 

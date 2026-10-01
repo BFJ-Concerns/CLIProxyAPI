@@ -56,6 +56,7 @@ func (s *Service) Run(ctx context.Context) error {
 	s.startModelCatalogUpdaters(ctx)
 
 	usage.StartDefault(ctx)
+	s.startUsageSpool()
 	homeEnabled := s.cfg != nil && s.cfg.Home.Enabled
 	if homeEnabled {
 		forceHomeRuntimeConfig(s.cfg)
@@ -371,6 +372,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		}
 
 		usage.StopDefault()
+		s.stopUsageSpool()
 	})
 	return shutdownErr
 }
