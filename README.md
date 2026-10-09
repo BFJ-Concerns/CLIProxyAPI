@@ -2,6 +2,20 @@
 
 English | [中文](README_CN.md) | [日本語](README_JA.md)
 
+## About this fork
+
+This is a personal fork of [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). `main` mirrors upstream unchanged; the `patches` branch carries a few additive commits rebased onto each upstream release. Everything after this section is upstream's README.
+
+We forked for two reasons.
+
+**Claude subscription quota is perishable, and upstream's routing ignores it.** Each Claude subscription account has a 5-hour session window, a weekly window, and a separate weekly window for Fable models. Round-robin and fill-first don't look at any of them, so quota left on a window when it resets is simply lost. Non-Fable traffic can also use up an account's weekly window while its Fable allowance sits untouched and unusable. The fork adds `routing.strategy: quota-aware`, which polls each account's usage and spends the soonest-resetting quota first. It also holds back enough weekly headroom to keep the Fable allowance usable. The options are documented under `routing` in [`config.example.yaml`](config.example.yaml).
+
+**The management panel updates itself.** By default the server downloads the panel, a single HTML page, from the latest release of a separate repository, and replaces it whenever a newer release appears, checking every three hours. If there is no copy yet and GitHub can't be reached, it downloads the page from a fallback site with no integrity check at all. Turning auto-update off still leaves that first download in place. That's annoying, because the UI changes under you without you choosing to upgrade. It's also a security flaw: the page runs on the management origin and handles the management key, so anyone who can publish a release of that repository, or serve that fallback site, can change code that holds the keys to your proxy. We serve a panel we have built and checked ourselves, placed in the static directory in advance, with `disable-auto-update-panel: true` so the server never replaces it. This is configuration for now; the fork does not yet change the download behaviour itself.
+
+The patches also add an unauthenticated `/api/hello` route, so Claude Code's start-up pre-connect gets a 200 instead of logging a 404, and an opt-in on-disk spool of usage records and quota readings, which an external consumer reads and acknowledges through the management API.
+
+---
+
 If you want to use CLIProxyAPI on your desktop, we recommend our [EasyCLIProxyAPI](https://github.com/router-for-me/EasyCLIProxyAPI) desktop client. It provides a graphical configuration UI, automatic updates, system tray integration, and one-click start/stop for the CLIProxyAPI service.
 
 CLIProxyAPI is a proxy server that provides OpenAI/Gemini/Claude/Codex/Grok compatible API interfaces for CLI.
