@@ -4,7 +4,7 @@ Fork of [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI
 a Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs
 with OAuth and load balancing across credentials. Project intent and planning
 live in the sibling annexe repo (`../CLIProxyAPI-Annexe`;
-`BFJ-Concerns/CLIProxyAPI-Annexe` on Forgejo) — its `README.md` is the
+`BFJ-Concerns/CLIProxyAPI-Annexe` on GitHub) — its `README.md` is the
 contract for what this fork is.
 
 ## Fork discipline
