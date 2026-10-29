@@ -59,10 +59,25 @@ go build -o test-output ./cmd/server && rm test-output  # Verify compile (REQUIR
 - `internal/watcher/` — Config hot-reload
 - `internal/usage/` — Usage and token accounting
 - `internal/home/` — CLIProxyAPIHome control plane integration (bootstrap, RESP communication, dispatch coordination)
+- `internal/managementasset/` — Management panel (`/management.html`). The
+  fork serves the panel bundled at `panel/management.html` (embedded by
+  `bundled_panel.go`) and never downloads one; upstream's release download
+  in `updater.go` is renamed `ensureReleaseManagementHTML`, uncalled, and
+  otherwise left as upstream wrote it. See *Management panel* below.
 - `internal/tui/` — Bubbletea terminal UI (`--tui`, `--standalone`)
 - `sdk/cliproxy/` — Embeddable SDK entry (service/builder/watchers/pipeline);
   credential selection strategies live in `sdk/cliproxy/auth/`
 - `test/` — Cross-module integration tests
+
+## Management panel
+
+`internal/managementasset/panel/management.html` is a release build of the
+panel fork (`BFJ-Concerns/Cli-Proxy-API-Management-Center`, checked out at
+`../Cli-Proxy-API-Management-Center`, fork work on its `patches` branch). It
+is generated output, so never edit it by hand. To refresh it, check out the
+panel release tag there, run `VERSION=<tag> bun run build`, copy
+`dist/index.html` over the bundled file, and name the panel release in the
+commit message.
 
 ## Upstream law
 
