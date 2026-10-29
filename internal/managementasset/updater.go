@@ -187,9 +187,10 @@ func FilePath(configFilePath string) string {
 	return filepath.Join(dir, ManagementFileName)
 }
 
-// EnsureLatestManagementHTML checks the latest management.html asset and updates the local copy when needed.
+// ensureReleaseManagementHTML checks the latest management.html asset and updates the local copy when needed.
 // It coalesces concurrent sync attempts and returns whether the asset exists after the sync attempt.
-func EnsureLatestManagementHTML(ctx context.Context, staticDir string, proxyURL string, panelRepository string) bool {
+// The fork installs its bundled panel instead (bundled_panel.go); this stays unchanged to keep rebases clean.
+func ensureReleaseManagementHTML(ctx context.Context, staticDir string, proxyURL string, panelRepository string) bool {
 	if ctx == nil {
 		ctx = context.Background()
 	}
