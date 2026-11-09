@@ -1128,7 +1128,7 @@ func reconcileClaudeCodeFableModelAfterPayload(
 	if fableState.injectedFallbacks && !payloadTouchedFallbacks {
 		wantFallback := ""
 		switch {
-		case isClaudeFable51Model(currentModel):
+		case isClaudeFable51Model(currentModel), helps.IsClaudeFable52OnlyModel(currentModel):
 			wantFallback = "claude-opus-5"
 		case isClaudeOpus55Model(currentModel):
 			wantFallback = "claude-opus-4-8"
@@ -1185,6 +1185,9 @@ func reconcileClaudeCodeFableModelAfterPayload(
 
 	if isClaudeOpus55Model(currentModel) && !gjson.GetBytes(body, "fallbacks").Exists() && !payloadTouchedFallbacks {
 		body, _ = sjson.SetRawBytes(body, "fallbacks", []byte(`[{"model":"claude-opus-4-8"}]`))
+	}
+	if helps.IsClaudeFable52OnlyModel(currentModel) && !gjson.GetBytes(body, "fallbacks").Exists() && !payloadTouchedFallbacks {
+		body, _ = sjson.SetRawBytes(body, "fallbacks", []byte(`[{"model":"claude-opus-5"}]`))
 	}
 	thinkingType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String()))
 	thinkingActive := thinkingType == "adaptive" || thinkingType == "enabled"
@@ -1847,11 +1850,13 @@ func applyCloakingInternal(
 
 	// In native Claude Code 2.1.258, claude-fable-5-1 requests carry:
 	// "fallbacks": [{"model": "claude-opus-5"}]
+	// claude-fable-5-2 carries refusal_fallback in the Claude Code catalog and
+	// takes the same target; Mythos 5.2 does not.
 	model := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "model").String()))
 	if isClaudeOpus55Model(model) && !isProbeOrHelper && !gjson.GetBytes(payload, "fallbacks").Exists() {
 		payload, _ = sjson.SetRawBytes(payload, "fallbacks", []byte(`[{"model":"claude-opus-4-8"}]`))
 	}
-	if isClaudeFable51Model(model) && !isProbeOrHelper {
+	if (isClaudeFable51Model(model) || helps.IsClaudeFable52OnlyModel(model)) && !isProbeOrHelper {
 		if !gjson.GetBytes(payload, "fallbacks").Exists() {
 			payload, _ = sjson.SetRawBytes(payload, "fallbacks", []byte(`[{"model":"claude-opus-5"}]`))
 		}
