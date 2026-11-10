@@ -145,7 +145,7 @@ func DetectClaudeCodeRequest(headers http.Header, payload []byte, countTokens bo
 	userAgent := headerValue(headers, "User-Agent")
 	entrypoint, agentSDKVersion := parseClaudeCodeUserAgentDetails(userAgent)
 	detection := ClaudeCodeRequestDetection{
-		XAppCLI:         headerValue(headers, "X-App") == "cli",
+		XAppCLI:         isClaudeCodeXApp(headerValue(headers, "X-App")),
 		UserAgent:       plausibleClaudeCodeUserAgent(userAgent, cfg),
 		BetasPresent:    headerContainsClaudeCodeBeta(headers),
 		Entrypoint:      entrypoint,
