@@ -1840,7 +1840,7 @@ func reconcileClaudeCodeFableModelAfterPayloadDoc(
 	if fableState.injectedFallbacks && !payloadTouchedFallbacks {
 		wantFallback := ""
 		switch {
-		case isClaudeFable51Model(currentModel):
+		case isClaudeFable51Model(currentModel), isClaudeFable52Model(currentModel):
 			wantFallback = "claude-opus-5"
 		case isClaudeOpus55Model(currentModel):
 			wantFallback = "claude-opus-4-8"
@@ -2772,7 +2772,7 @@ func applyCloakingInternalDoc(
 		model := strings.ToLower(strings.TrimSpace(doc.Get("model").String()))
 		if isClaudeOpus55Model(model) {
 			_ = doc.SetRawBytes("fallbacks", []byte(`[{"model":"claude-opus-4-8"}]`))
-		} else if isClaudeFable51Model(model) {
+		} else if isClaudeFable51Model(model) || isClaudeFable52Model(model) {
 			_ = doc.SetRawBytes("fallbacks", []byte(`[{"model":"claude-opus-5"}]`))
 		}
 	}

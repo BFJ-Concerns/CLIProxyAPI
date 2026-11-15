@@ -359,7 +359,7 @@ func isClaudeFable51OnlyModel(model string) bool {
 // prefix fails binding validation unless the request opts into dropping them.
 // See https://platform.claude.com/docs/en/build-with-claude/preserved-thinking
 func isClaudePreservedThinkingModel(model string) bool {
-	return isClaudeOpus55Model(model) || isClaudeSonnet55Model(model) || isClaudeHaiku55Model(model) || isClaudeFable51OnlyModel(model) || isClaudeFable52Model(model)
+	return isClaudeOpus55Model(model) || isClaudeSonnet55Model(model) || isClaudeHaiku55Model(model) || isClaudeFable51OnlyModel(model) || isClaudeFable52Model(model) || helps.IsClaudeMythos52Model(model)
 }
 
 // claudeThinkingTypeAcceptsBlockBinding reports whether the body's thinking
@@ -458,7 +458,7 @@ func applyClaudePreservedThinkingBindingDoc(doc *ojson.Doc) bool {
 // thinking.display=updates unless the caller already chose a display mode.
 // Claude Code 2.1.321 added Fable 5.2 and Haiku 5.5.
 func claudeModelUsesProgressDisplay(model string) bool {
-	return isClaudeOpus55Model(model) || isClaudeFable51Model(model) || isClaudeFable52Model(model) ||
+	return isClaudeOpus55Model(model) || isClaudeFable51Model(model) || isClaudeFable52Model(model) || helps.IsClaudeMythos52Model(model) ||
 		isClaudeSonnet5Model(model) || isClaudeSonnet55Model(model) || isClaudeHaiku55Model(model)
 }
 
@@ -505,6 +505,7 @@ func claudeModelHasPerTurnEffort(model string) bool {
 	return isClaudeOpus55Model(model) ||
 		strings.HasPrefix(claudeCanonicalModel(model), "claude-fable-5-1") ||
 		isClaudeFable52Model(model) ||
+		helps.IsClaudeMythos52Model(model) ||
 		isClaudeSonnet55Model(model) ||
 		isClaudeHaiku55Model(model)
 }
