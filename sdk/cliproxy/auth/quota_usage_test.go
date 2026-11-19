@@ -3,6 +3,8 @@ package auth
 import (
 	"testing"
 	"time"
+
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 )
 
 // The synthetic matrix's building blocks: fabricated window states with a
@@ -10,12 +12,17 @@ import (
 // the interesting quota shapes cannot be manufactured live without burning
 // real quota.
 
+// defaultTestPolicy is the policy the shipped defaults produce, read from
+// the config surface itself. Rows state the arithmetic they expect in the
+// default values (0.5, 10, 95, "claude-fable"), so a change to a default
+// turns those rows red instead of leaving them green against old numbers.
 func defaultTestPolicy() QuotaPolicy {
+	shipped := internalconfig.QuotaRoutingConfig{}
 	return QuotaPolicy{
-		FableWeeklyRatio:   0.5,
-		ReserveMargin:      10,
-		SessionCeiling:     95,
-		FableModelPrefixes: []string{"claude-fable"},
+		FableWeeklyRatio:   shipped.EffectiveFableWeeklyRatio(),
+		ReserveMargin:      shipped.EffectiveReserveMargin(),
+		SessionCeiling:     shipped.EffectiveSessionCeiling(),
+		FableModelPrefixes: shipped.EffectiveFableModelPrefixes(),
 	}
 }
 
@@ -116,6 +123,20 @@ func TestReservedWeeklyArithmetic(t *testing.T) {
 				t.Fatalf("ReservedWeekly = %v, want %v", got, tc.reserved)
 			}
 		})
+	}
+}
+
+// The shipped defaults never compute an empty reserve for an account with
+// Fable headroom, however little is left.
+func TestShippedDefaultsReserveForAnyFableHeadroom(t *testing.T) {
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	future := now.Add(24 * time.Hour)
+	policy := defaultTestPolicy()
+	for _, fableUsed := range []float64{0, 1, 50, 99, 99.9} {
+		usage := QuotaUsage{Weekly: window(0, future), Fable: window(fableUsed, future)}
+		if got := policy.ReservedWeekly(usage, now); got <= 0 {
+			t.Fatalf("ReservedWeekly with Fable at %v%% = %v, want a positive reserve", fableUsed, got)
+		}
 	}
 }
 

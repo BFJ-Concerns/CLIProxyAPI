@@ -10,46 +10,45 @@ import (
 	"time"
 
 	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	log "github.com/sirupsen/logrus"
 )
 
 func TestQuotaDecisionSurvivesProductionLogFormatter(t *testing.T) {
 	output := captureQuotaProductionLogs(t)
 
-	now := time.Date(2026, time.August, 21, 18, 50, 0, 0, time.UTC)
-	selector := &QuotaAwareSelector{policy: QuotaPolicy{
-		FableWeeklyRatio: 0.5,
-		ReserveMargin:    10,
-		SessionCeiling:   95,
-	}}
-	candidates := []quotaCandidate{
-		{
-			auth: &Auth{ID: "account-alpha"},
-			usage: QuotaUsage{
-				Session: &QuotaWindow{Percent: 12, ResetsAt: now.Add(2 * time.Hour)},
-				Weekly:  &QuotaWindow{Percent: 35, ResetsAt: now.Add(48 * time.Hour)},
-				Fable:   &QuotaWindow{Percent: 40, ResetsAt: now.Add(24 * time.Hour)},
-			},
-		},
-		{
-			auth: &Auth{ID: "account-beta"},
-			usage: QuotaUsage{
-				Session: &QuotaWindow{Percent: 20, ResetsAt: now.Add(3 * time.Hour)},
-				Weekly:  &QuotaWindow{Percent: 50, ResetsAt: now.Add(72 * time.Hour)},
-				Fable:   &QuotaWindow{Percent: 10, ResetsAt: now.Add(36 * time.Hour)},
-			},
-		},
-	}
+	// Fixed reset times far ahead keep the rendered windows stable while
+	// Pick evaluates them against the real clock.
+	base := time.Date(2099, time.August, 21, 18, 50, 0, 0, time.UTC)
+	selector := NewQuotaAwareSelector(defaultTestPolicy())
+	alpha := subscriptionAuth("account-alpha")
+	beta := subscriptionAuth("account-beta")
+	// alpha is evaluated first, but beta's weekly window resets sooner and
+	// it has free headroom, so beta is the policy's choice.
+	selector.store.Set(alpha.ID, QuotaUsage{
+		Session: &QuotaWindow{Percent: 12, ResetsAt: base.Add(2 * time.Hour)},
+		Weekly:  &QuotaWindow{Percent: 35, ResetsAt: base.Add(72 * time.Hour)},
+		Fable:   &QuotaWindow{Percent: 40, ResetsAt: base.Add(24 * time.Hour)},
+	})
+	selector.store.Set(beta.ID, QuotaUsage{
+		Session: &QuotaWindow{Percent: 20, ResetsAt: base.Add(3 * time.Hour)},
+		Weekly:  &QuotaWindow{Percent: 50, ResetsAt: base.Add(48 * time.Hour)},
+		Fable:   &QuotaWindow{Percent: 90, ResetsAt: base.Add(36 * time.Hour)},
+	})
+
 	ctx := internallogging.WithRequestID(context.Background(), "decision")
-	selector.logDecision(ctx, "claude-sonnet", false, candidates, nil, candidates[0].auth, "earliest-weekly-reset", now)
+	chosen, errPick := selector.Pick(ctx, "claude", "claude-sonnet", cliproxyexecutor.Options{}, []*Auth{alpha, beta})
+	if errPick != nil || chosen == nil || chosen.ID != beta.ID {
+		t.Fatalf("Pick = %v, %v; want account-beta", chosen, errPick)
+	}
 
 	line := output.String()
 	for _, want := range []string{
 		"[decision]",
 		"class=non-fable",
 		"model=claude-sonnet",
-		"candidates=account-alpha session=12.0%@2026-08-21T20:50:00Z weekly=35.0%@2026-08-23T18:50:00Z free=25.0 fable=40.0%@2026-08-22T18:50:00Z eligible=true; account-beta session=20.0%@2026-08-21T21:50:00Z weekly=50.0%@2026-08-24T18:50:00Z free=-5.0 fable=10.0%@2026-08-23T06:50:00Z eligible=true",
-		"chosen=account-alpha",
+		"candidates=account-alpha session=12.0%@2099-08-21T20:50:00Z weekly=35.0%@2099-08-24T18:50:00Z free=25.0 fable=40.0%@2099-08-22T18:50:00Z eligible=true; account-beta session=20.0%@2099-08-21T21:50:00Z weekly=50.0%@2099-08-23T18:50:00Z free=35.0 fable=90.0%@2099-08-23T06:50:00Z eligible=true",
+		"chosen=account-beta",
 		`reason="earliest-weekly-reset"`,
 	} {
 		if !strings.Contains(line, want) {
