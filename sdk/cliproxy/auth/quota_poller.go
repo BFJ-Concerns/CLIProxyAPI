@@ -7,9 +7,8 @@
 // every window is comfortable, denser as any window nears exhaustion,
 // never more than once per 60 seconds per account, honouring Retry-After
 // on 429 in full, and never abandoning a loaded credential. Schedule and
-// state survive selector reinstalls (BindQuotaPoller adopts them), so the
-// cadence floor and throttle suppression hold per account across config
-// reloads.
+// state survive config reloads and process restarts, so the cadence floor
+// and throttle suppression hold per account.
 package auth
 
 import (
@@ -94,8 +93,9 @@ type quotaUsagePoller struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	schedule map[string]*quotaPollSchedule
+	mu        sync.Mutex
+	schedule  map[string]*quotaPollSchedule
+	statePath string
 
 	// clients caches one HTTP client per proxy URL ("" = direct). Requests
 	// deliberately carry no timeout (upstream law: timeouts only during
@@ -126,11 +126,11 @@ func (p *quotaUsagePoller) adopt(previous *quotaUsagePoller) {
 		return
 	}
 	previous.mu.Lock()
+	defer previous.mu.Unlock()
 	for id, sched := range previous.schedule {
 		p.schedule[id] = &quotaPollSchedule{nextPollAt: sched.nextPollAt, failures: sched.failures}
 	}
-	previous.mu.Unlock()
-	if previous.store != nil && previous.store != p.store {
+	if previous.store != p.store {
 		for id, usage := range previous.store.Snapshot() {
 			p.store.Set(id, usage)
 		}
@@ -150,6 +150,8 @@ func (p *quotaUsagePoller) Stop() {
 	if p == nil {
 		return
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.cancel()
 }
 
@@ -184,13 +186,21 @@ func (p *quotaUsagePoller) sweep(now time.Time) {
 		}
 	}
 
+	p.mu.Lock()
+	if p.ctx.Err() != nil {
+		p.mu.Unlock()
+		return
+	}
+	pruned := false
 	for _, id := range p.store.IDs() {
 		if _, ok := loaded[id]; !ok {
 			p.store.Remove(id)
+			pruned = true
 		}
 	}
-
-	p.mu.Lock()
+	if pruned {
+		p.saveStateLocked()
+	}
 	due := make([]*Auth, 0, len(loaded))
 	for id, auth := range loaded {
 		sched, ok := p.schedule[id]
@@ -211,52 +221,68 @@ func (p *quotaUsagePoller) sweep(now time.Time) {
 	}
 }
 
-// finish records the outcome of one poll attempt and schedules the next,
-// never sooner than the cadence floor after this attempt started. failed
-// marks a real failure (throttling is not failure); enough consecutive
-// failures degrade the credential to the no-state-yet rule.
-func (p *quotaUsagePoller) finish(authID string, startedAt, nextPollAt time.Time, failed bool) {
-	if floor := startedAt.Add(quotaPollFloor); nextPollAt.Before(floor) {
-		nextPollAt = floor
-	}
-	degrade := false
+// begin records the floor before sending a request so an interrupted poll
+// still counts towards the cadence limit across a restart.
+func (p *quotaUsagePoller) begin(authID string, startedAt time.Time) bool {
 	p.mu.Lock()
-	if sched, ok := p.schedule[authID]; ok {
-		sched.inFlight = false
-		sched.nextPollAt = nextPollAt
-		if failed {
-			sched.failures++
-			if sched.failures == quotaFailureDegradeThreshold {
-				degrade = true
-			}
-		} else {
-			sched.failures = 0
+	defer p.mu.Unlock()
+	if p.ctx.Err() != nil {
+		return false
+	}
+	p.schedule[authID].nextPollAt = startedAt.Add(quotaPollFloor)
+	p.saveStateLocked()
+	return true
+}
+
+// finish records the reading and scheduling outcome together. Failed polls
+// keep the previous reading until the failure threshold is reached.
+func (p *quotaUsagePoller) finish(authID string, startedAt, nextPollAt time.Time, failed bool, usage *QuotaUsage) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.ctx.Err() != nil {
+		return
+	}
+	sched := p.schedule[authID]
+	sched.inFlight = false
+	sched.nextPollAt = nextPollAt
+	if floor := startedAt.Add(quotaPollFloor); nextPollAt.Before(floor) {
+		sched.nextPollAt = floor
+	}
+	if failed {
+		sched.failures++
+		if sched.failures == quotaFailureDegradeThreshold {
+			p.store.Remove(authID)
+			log.WithField("auth", authID).Warn("quota polls persistently failing; degrading credential to no-state routing")
 		}
+	} else {
+		sched.failures = 0
 	}
-	p.mu.Unlock()
-	if degrade {
-		p.store.Remove(authID)
-		log.WithFields(log.Fields{"auth": authID}).Warn("quota polls persistently failing; degrading credential to no-state routing")
+	if usage != nil {
+		p.store.Set(authID, *usage)
 	}
+	p.saveStateLocked()
 }
 
 // poll fetches one credential's usage state. Failures keep the last known
 // state serving (the store is only written on success) until the
 // degradation threshold drops it.
 func (p *quotaUsagePoller) poll(auth *Auth, now time.Time) {
+	if !p.begin(auth.ID, now) {
+		return
+	}
 	accessToken, _ := auth.Metadata["access_token"].(string)
 	if strings.TrimSpace(accessToken) == "" {
 		log.WithFields(log.Fields{"auth": auth.ID}).Debug("quota poll skipped: no access token in metadata")
+		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true, nil)
 		reportQuotaReading(auth, QuotaReading{PolledAt: now, Failed: true, Err: "no access token in metadata"})
-		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
 
 	req, errRequest := http.NewRequestWithContext(p.ctx, http.MethodGet, quotaUsageEndpoint, nil)
 	if errRequest != nil {
 		log.WithFields(log.Fields{"auth": auth.ID, "error": errRequest.Error()}).Warn("quota poll request build failed")
+		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true, nil)
 		reportQuotaReading(auth, QuotaReading{PolledAt: now, Failed: true, Err: errRequest.Error()})
-		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
@@ -266,8 +292,8 @@ func (p *quotaUsagePoller) poll(auth *Auth, now time.Time) {
 	resp, errDo := p.clientFor(auth.ProxyURL).Do(req)
 	if errDo != nil {
 		log.WithFields(log.Fields{"auth": auth.ID, "error": errDo.Error()}).Warn("quota poll failed; serving last known state")
+		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true, nil)
 		reportQuotaReading(auth, QuotaReading{PolledAt: now, Failed: true, Err: errDo.Error()})
-		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
 	defer func() {
@@ -279,32 +305,32 @@ func (p *quotaUsagePoller) poll(auth *Auth, now time.Time) {
 	if resp.StatusCode == http.StatusTooManyRequests {
 		retryAt := quotaRetryAt(resp.Header, now)
 		log.WithFields(log.Fields{"auth": auth.ID, "retry_at": retryAt.Format(time.RFC3339)}).Info("quota poll throttled; honouring Retry-After")
+		p.finish(auth.ID, now, retryAt, false, nil)
 		reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Throttled: true, RetryAt: retryAt})
-		p.finish(auth.ID, now, retryAt, false)
 		return
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		log.WithFields(log.Fields{"auth": auth.ID, "status": resp.StatusCode}).Warn("quota poll returned non-success; serving last known state")
+		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true, nil)
 		reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Failed: true})
-		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
 
 	body, errRead := io.ReadAll(resp.Body)
 	if errRead != nil {
 		log.WithFields(log.Fields{"auth": auth.ID, "error": errRead.Error()}).Warn("quota poll read failed; serving last known state")
+		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true, nil)
 		reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Failed: true, Err: errRead.Error()})
-		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
 	usage, errParse := parseClaudeUsageResponse(body, time.Now())
 	if errParse != nil {
 		log.WithFields(log.Fields{"auth": auth.ID, "error": errParse.Error()}).Warn("quota poll parse failed; serving last known state")
+		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true, nil)
 		reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Failed: true, Err: errParse.Error(), Body: body})
-		p.finish(auth.ID, now, now.Add(quotaFailureRetry), true)
 		return
 	}
-	p.store.Set(auth.ID, usage)
+	p.finish(auth.ID, now, now.Add(quotaPollInterval(usage, now)), false, &usage)
 	reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Body: body})
 	log.Infof(
 		"quota usage polled auth=%s session=%s weekly=%s fable=%s",
@@ -313,7 +339,6 @@ func (p *quotaUsagePoller) poll(auth *Auth, now time.Time) {
 		describeQuotaWindow(usage.Weekly, now),
 		describeQuotaWindow(usage.Fable, now),
 	)
-	p.finish(auth.ID, now, now.Add(quotaPollInterval(usage, now)), false)
 }
 
 // clientFor returns the cached HTTP client for a credential's proxy URL,
@@ -442,13 +467,10 @@ var (
 	quotaPollers   = make(map[*Manager]*quotaUsagePoller)
 )
 
-// BindQuotaPoller wires quota polling for a manager after a selector
-// install, and unwires it at teardown. Call it at every selector-install
-// seam with the selector that was installed, and at service shutdown with
-// a nil selector: it stops any previous poller and, when the installed
-// selector (unwrapping session affinity) is the quota-aware strategy,
-// starts a fresh poller — adopting the previous poller's schedule and
-// state — feeding that selector's store.
+// BindQuotaPoller restores and starts quota polling for a quota-aware
+// selector, unwrapping session affinity. Call it after setting the manager's
+// config, and at teardown with a nil selector. It restores state before
+// returning so new session bindings can use the last successful readings.
 func BindQuotaPoller(m *Manager, installed Selector) {
 	if m == nil {
 		return
@@ -459,24 +481,24 @@ func BindQuotaPoller(m *Manager, installed Selector) {
 	quota, ok := installed.(*QuotaAwareSelector)
 
 	quotaPollersMu.Lock()
+	defer quotaPollersMu.Unlock()
 	previous := quotaPollers[m]
-	var next *quotaUsagePoller
-	if ok {
-		next = newQuotaUsagePoller(m, quota.store)
-		quotaPollers[m] = next
-	} else {
-		delete(quotaPollers, m)
-	}
-	quotaPollersMu.Unlock()
-
-	if next != nil {
-		next.adopt(previous)
-	}
 	if previous != nil {
 		previous.Stop()
 	}
-	if next != nil {
-		quota.bindPoller(next)
-		next.Start()
+	if !ok {
+		delete(quotaPollers, m)
+		return
 	}
+
+	next := newQuotaUsagePoller(m, quota.store)
+	next.statePath = quotaPollStatePath(m)
+	if previous != nil && previous.statePath == next.statePath {
+		next.adopt(previous)
+	} else {
+		next.restoreState()
+	}
+	quotaPollers[m] = next
+	quota.bindPoller(next)
+	next.Start()
 }

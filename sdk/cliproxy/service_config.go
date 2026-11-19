@@ -63,7 +63,8 @@ type routingRuntimeState struct {
 	sessionAffinityRebindOn  string
 	// quota carries the quota-aware strategy's parameters (fork addition;
 	// zero value under every other strategy).
-	quota quotaRuntimeParams
+	quota         quotaRuntimeParams
+	quotaStateDir string
 }
 
 func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
@@ -85,6 +86,9 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	case "quota-aware", "quotaaware", "quota":
 		state.strategy = "quota-aware"
 		state.quota = quotaRuntimeParamsFromConfig(cfg)
+		if !cfg.Home.Enabled {
+			state.quotaStateDir = cfg.AuthDir
+		}
 	}
 	state.sessionAffinity = cfg.Routing.SessionAffinity
 	if ttl := strings.TrimSpace(cfg.Routing.SessionAffinityTTL); ttl != "" {
@@ -287,17 +291,17 @@ func (s *Service) applyManagerConfig(ctx context.Context, commit configCommit) b
 	if errContext := ctx.Err(); errContext != nil {
 		return false
 	}
-	routingState := normalizedRoutingRuntimeState(commit.cfg)
-	if s.appliedRoutingState == nil || *s.appliedRoutingState != routingState {
-		routingSelector := newRoutingSelectorWithExisting(routingState, s.coreManager.Selector())
-		s.coreManager.SetSelector(routingSelector)
-		coreauth.BindQuotaPoller(s.coreManager, routingSelector)
-		s.appliedRoutingState = &routingState
-	}
 	s.applyRetryConfig(commit.cfg)
 	store := s.resolveCooldownStateStore(commit.cfg)
 	if !s.coreManager.ApplyConfigWithCooldownStateStore(ctx, commit.cfg, store) {
 		return false
+	}
+	routingState := normalizedRoutingRuntimeState(commit.cfg)
+	if s.appliedRoutingState == nil || *s.appliedRoutingState != routingState {
+		routingSelector := newRoutingSelectorWithExisting(routingState, s.coreManager.Selector())
+		coreauth.BindQuotaPoller(s.coreManager, routingSelector)
+		s.coreManager.SetSelector(routingSelector)
+		s.appliedRoutingState = &routingState
 	}
 	s.coreManager.SetOAuthModelAlias(commit.cfg.OAuthModelAlias)
 	return true
