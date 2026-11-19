@@ -1,11 +1,12 @@
 package usagespool
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/MoeForge/moego/json"
 )
 
 type testClock struct{ t time.Time }
