@@ -37,6 +37,10 @@ func newBenchLiftManager(t *testing.T, authID string) (*Manager, string) {
 
 // benchClaude records a 429 carrying the given Anthropic rejection headers.
 func benchClaude(manager *Manager, authID, model string, credentialScope bool, retryAfter time.Duration, headers http.Header) {
+	markClaudeCooldown(manager, authID, model, credentialScope, retryAfter, headers, &Error{HTTPStatus: http.StatusTooManyRequests, Message: "rate limited"})
+}
+
+func markClaudeCooldown(manager *Manager, authID, model string, credentialScope bool, retryAfter time.Duration, headers http.Header, resultErr *Error) {
 	ctx := internallogging.WithResponseHeadersHolder(context.Background())
 	internallogging.SetResponseHeaders(ctx, headers)
 	manager.MarkResult(ctx, Result{
@@ -46,7 +50,7 @@ func benchClaude(manager *Manager, authID, model string, credentialScope bool, r
 		Success:         false,
 		CredentialScope: credentialScope,
 		RetryAfter:      &retryAfter,
-		Error:           &Error{HTTPStatus: http.StatusTooManyRequests, Message: "rate limited"},
+		Error:           resultErr,
 	})
 }
 
@@ -138,9 +142,12 @@ func TestLiftWindowBenches_CredentialBenchLiftsWhenWeeklyReadingFalls(t *testing
 
 func TestLiftWindowBenches_ModelBenchLiftsWhenFableReadingFalls(t *testing.T) {
 	authID := "bench-lift-model"
-	manager, _ := newBenchLiftManager(t, authID)
+	manager, storeDir := newBenchLiftManager(t, authID)
 	fableReset := time.Now().Add(4 * 24 * time.Hour)
 	benchClaude(manager, authID, benchLiftFableModel, false, time.Until(fableReset), fableRejectionHeaders(fableReset))
+	if !persistedLiveBench(t, storeDir, authID, benchLiftFableModel) {
+		t.Fatal("Fable bench was not persisted before the lift")
+	}
 
 	if benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
 		t.Fatal("model-scoped bench did not withhold the Fable model")
@@ -163,6 +170,15 @@ func TestLiftWindowBenches_ModelBenchLiftsWhenFableReadingFalls(t *testing.T) {
 	}, time.Now(), time.Now())
 	if !benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
 		t.Fatal("Fable bench survived a poll showing Fable headroom")
+	}
+	records, errLoad := NewFileCooldownStateStore(storeDir).Load(context.Background())
+	if errLoad != nil {
+		t.Fatalf("load cooldown store after lift: %v", errLoad)
+	}
+	for _, record := range records {
+		if record.AuthID == authID && record.Model == benchLiftFableModel {
+			t.Fatalf("Fable bench survived in the cooldown store: %+v", record)
+		}
 	}
 }
 
@@ -223,30 +239,135 @@ func TestQuotaPoll_SuccessfulPollLiftsBench(t *testing.T) {
 	}
 }
 
-func TestLiftWindowBenches_BenchRecordedAfterPollStartStands(t *testing.T) {
-	authID := "bench-lift-stale-poll"
-	manager, _ := newBenchLiftManager(t, authID)
-	weeklyReset := time.Now().Add(3 * 24 * time.Hour)
-	fableReset := time.Now().Add(4 * 24 * time.Hour)
+func TestQuotaPoll_BenchRecordedDuringRequestStands(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		credentialScope bool
+	}{
+		{name: "model"},
+		{name: "credential", credentialScope: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			authID := "bench-lift-in-flight-" + tc.name
+			manager, _ := newBenchLiftManager(t, authID)
+			current, _ := manager.GetByID(authID)
+			current.Metadata = map[string]any{"access_token": "test-token"}
+			poller := newQuotaUsagePoller(manager, NewQuotaUsageStore())
+			t.Cleanup(poller.Stop)
+			poller.schedule[authID] = &quotaPollSchedule{inFlight: true}
+			now := time.Now()
+			reset := now.Add(24 * time.Hour)
+			transport := &quotaPollerCountedTransport{
+				issued: make(chan struct{}, 2),
+				status: http.StatusOK,
+				body:   `{"limits":[{"kind":"weekly_all","percent":40}]}`,
+				onRequest: func() {
+					benchClaude(manager, authID, benchLiftOpusModel, tc.credentialScope, time.Until(reset), weeklyRejectionHeaders(reset))
+					if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
+						t.Fatal("429 did not bench the requested model")
+					}
+					if got := benchLiftAvailable(t, manager, authID, benchLiftFableModel); got == tc.credentialScope {
+						t.Fatalf("unrelated model available = %t for credential scope %t", got, tc.credentialScope)
+					}
+				},
+			}
+			poller.clients[""] = &http.Client{Transport: transport}
 
-	// The poll starts and reads headroom; the 429s that exhaust the
-	// windows are recorded before its reading arrives.
-	polledAt := time.Now().Add(-time.Second)
-	benchClaude(manager, authID, benchLiftFableModel, false, time.Until(fableReset), fableRejectionHeaders(fableReset))
-	benchClaude(manager, authID, benchLiftOpusModel, true, time.Until(weeklyReset), weeklyRejectionHeaders(weeklyReset))
+			poller.poll(current, now.Add(-time.Second))
+			if _, ok := poller.store.Get(authID); !ok {
+				t.Fatal("in-flight poll did not publish its successful reading")
+			}
+			if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
+				t.Error("poll lifted a bench recorded during its request")
+			}
 
-	staleReading := QuotaUsage{
-		Weekly: &QuotaWindow{Percent: 40, ResetsAt: weeklyReset},
-		Fable:  &QuotaWindow{Percent: 40, ResetsAt: fableReset},
+			transport.onRequest = nil
+			poller.schedule[authID].inFlight = true
+			poller.poll(current, time.Now())
+			if !benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
+				t.Fatal("poll started after the rejection did not lift the bench")
+			}
+		})
 	}
-	manager.liftWindowBenches(authID, staleReading, polledAt, time.Now())
-	if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) || benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
-		t.Fatal("a poll that started before the benches were recorded lifted them")
-	}
+}
 
-	// A poll started after the benches judges them.
-	manager.liftWindowBenches(authID, staleReading, time.Now(), time.Now())
-	if !benchLiftAvailable(t, manager, authID, benchLiftOpusModel) || !benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
-		t.Fatal("a poll started after the benches did not lift them")
+func TestLiftWindowBenches_UsesSessionRejectionLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		percent  float64
+		wantLift bool
+	}{
+		{name: "below", percent: 74, wantLift: true},
+		{name: "equal", percent: 75},
+		{name: "above", percent: 76},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			authID := "bench-lift-session-" + tc.name
+			manager, _ := newBenchLiftManager(t, authID)
+			reset := time.Now().Add(2 * time.Hour)
+			headers := http.Header{
+				"Anthropic-Ratelimit-Unified-Status":               {"rejected"},
+				"Anthropic-Ratelimit-Unified-5h-Status":            {"rejected"},
+				"Anthropic-Ratelimit-Unified-5h-Utilization":       {"0.75"},
+				"Anthropic-Ratelimit-Unified-5h-Reset":             {strconv.FormatInt(reset.Unix(), 10)},
+				"Anthropic-Ratelimit-Unified-7d-Status":            {"allowed"},
+				"Anthropic-Ratelimit-Unified-Representative-Claim": {"five_hour"},
+			}
+			benchClaude(manager, authID, benchLiftOpusModel, false, time.Until(reset), headers)
+			if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
+				t.Fatal("session rejection did not bench the model")
+			}
+
+			now := time.Now()
+			manager.liftWindowBenches(authID, QuotaUsage{
+				Session: &QuotaWindow{Percent: tc.percent, ResetsAt: reset},
+				Weekly:  &QuotaWindow{Percent: 10, ResetsAt: reset},
+			}, now, now)
+			if got := benchLiftAvailable(t, manager, authID, benchLiftOpusModel); got != tc.wantLift {
+				t.Fatalf("model available = %t at %.0f%% after rejection at 75%%, want %t", got, tc.percent, tc.wantLift)
+			}
+		})
+	}
+}
+
+func TestLiftWindowBenches_PreservesForceAndNonQuotaCooldowns(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		err             *Error
+		credentialScope bool
+	}{
+		{name: "force", err: &Error{HTTPStatus: http.StatusTooManyRequests, Code: ErrorCodeForceCooldown}},
+		{name: "credential-force", err: &Error{HTTPStatus: http.StatusTooManyRequests, Code: ErrorCodeForceCooldown}, credentialScope: true},
+		{name: "non-quota", err: &Error{HTTPStatus: http.StatusServiceUnavailable}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			authID := "bench-lift-protected-" + tc.name
+			manager, _ := newBenchLiftManager(t, authID)
+			reset := time.Now().Add(time.Hour)
+			headers := weeklyRejectionHeaders(reset)
+			// An overlapping 503 must survive even when the earlier quota rejection can be lifted.
+			if tc.err.HTTPStatus == http.StatusServiceUnavailable {
+				benchClaude(manager, authID, benchLiftOpusModel, tc.credentialScope, time.Until(reset), headers)
+				headers = nil
+			}
+			markClaudeCooldown(manager, authID, benchLiftOpusModel, tc.credentialScope, time.Until(reset), headers, tc.err)
+			if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
+				t.Fatal("cooldown did not withhold the model")
+			}
+			if got := benchLiftAvailable(t, manager, authID, benchLiftFableModel); got == tc.credentialScope {
+				t.Fatalf("unrelated model available = %t for credential scope %t", got, tc.credentialScope)
+			}
+
+			now := time.Now()
+			manager.liftWindowBenches(authID, QuotaUsage{
+				Weekly: &QuotaWindow{Percent: 10, ResetsAt: reset},
+			}, now, now)
+			if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
+				t.Fatal("poll showing headroom cleared a protected cooldown")
+			}
+			if tc.credentialScope && benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
+				t.Fatal("poll showing headroom freed another model on the force-cooled credential")
+			}
+		})
 	}
 }
