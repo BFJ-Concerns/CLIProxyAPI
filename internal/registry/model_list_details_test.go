@@ -182,3 +182,15 @@ func TestAnthropicModelListUsesAModelsOwnInputAndOutputLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestModelListDropsTheEffortsOfAProviderThatLeft(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("compat-a", "compat-a", []*ModelInfo{{ID: "shared-model", Thinking: &ThinkingSupport{Levels: []string{"high"}}}})
+	r.RegisterClient("compat-b", "compat-b", []*ModelInfo{{ID: "shared-model", Thinking: &ThinkingSupport{Levels: []string{"max"}}}})
+	r.UnregisterClient("compat-b")
+
+	listed := listedByKey(r.GetAvailableModels("openai"), "id")["shared-model"]
+	if got := listed["reasoning"].(map[string]any)["efforts"]; !reflect.DeepEqual(got, []string{"high"}) {
+		t.Fatalf("efforts after the last-registered provider left = %v, want [high]", got)
+	}
+}

@@ -179,25 +179,24 @@ func containsFold(values []string, want string) bool {
 
 // listedModelInfo is the model a list entry describes. A model several
 // providers serve accepts every effort any of them accepts, so the thinking
-// support of every provider still serving it is combined.
+// support of every provider still serving it is combined. registration.Info
+// can still hold a provider that has left, so it is consulted only when no
+// provider's own description is held.
 func listedModelInfo(registration *ModelRegistration) *ModelInfo {
 	if registration == nil || registration.Info == nil {
 		return nil
 	}
 	info := registration.Info
 	var supports []*ThinkingSupport
-	if info.Thinking != nil {
-		supports = append(supports, info.Thinking)
-	}
+	active := 0
 	for provider, providerInfo := range registration.InfoByProvider {
-		if providerInfo == nil || providerInfo == info || registration.Providers[provider] <= 0 {
+		if providerInfo == nil || registration.Providers[provider] <= 0 {
 			continue
 		}
-		if providerInfo.Thinking != nil {
-			supports = append(supports, providerInfo.Thinking)
-		}
+		active++
+		supports = append(supports, providerInfo.Thinking)
 	}
-	if len(supports) == 0 || (len(supports) == 1 && info.Thinking != nil) {
+	if active == 0 {
 		return info
 	}
 	combined := cloneModelInfo(info)
