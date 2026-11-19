@@ -107,6 +107,9 @@ func (h *GeminiAPIHandler) GeminiGetHandler(c *gin.Context) {
 			break
 		}
 	}
+	if targetModel == nil {
+		targetModel = registry.GetGlobalRegistry().GetAvailableModel("gemini", strings.TrimPrefix(action, "models/"))
+	}
 
 	if targetModel != nil {
 		// Ensure the name has 'models/' prefix in the output if it's a Gemini model

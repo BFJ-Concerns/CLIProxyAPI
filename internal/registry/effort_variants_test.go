@@ -198,3 +198,109 @@ func TestEffortVariantForLeavesAnOwnNameListedAfterItsVariants(t *testing.T) {
 		}
 	}
 }
+
+func TestFoldEffortVariantsUnlessLeavesAnExcludedOwnNamesVariantsListed(t *testing.T) {
+	folded := FoldEffortVariantsUnless(effortVariantCatalogue(), func(ownName string) bool {
+		return ownName == "claude-opus-5-5"
+	})
+
+	byID := make(map[string]*ModelInfo, len(folded))
+	for _, model := range folded {
+		byID[model.ID] = model
+	}
+	if _, ok := byID["claude-opus-5-5"]; ok {
+		t.Fatal("an excluded own name was made")
+	}
+	if byID["claude-opus-5-5-high"] == nil || byID["claude-opus-5-5-high"].EffortVariantOf != "" {
+		t.Fatalf("claude-opus-5-5-high = %v, want it listed as it is", byID["claude-opus-5-5-high"])
+	}
+	if byID["gemini-4-hydrogen"] == nil || !byID["gemini-4-hydrogen"].EffortFolded {
+		t.Fatalf("gemini-4-hydrogen = %v", byID["gemini-4-hydrogen"])
+	}
+}
+
+func TestFoldEffortVariantsMarksOnlyTheEntriesItMakes(t *testing.T) {
+	catalogue := []*ModelInfo{
+		{ID: "claude-opus-5-5", Thinking: &ThinkingSupport{Levels: []string{"low", "high"}}},
+		{ID: "claude-opus-5-5-high", Thinking: &ThinkingSupport{Levels: []string{"low", "high"}}},
+		{ID: "gemini-4-hydrogen-xhigh", Thinking: &ThinkingSupport{Levels: []string{"xhigh"}}},
+	}
+	for _, model := range FoldEffortVariants(catalogue) {
+		if want := model.ID == "gemini-4-hydrogen"; model.EffortFolded != want {
+			t.Fatalf("%s EffortFolded = %v, want %v", model.ID, model.EffortFolded, want)
+		}
+	}
+}
+
+func TestRegisteredEffortVariantForDecidesFromTheRegisteredModels(t *testing.T) {
+	full := FoldEffortVariants(effortVariantCatalogue())
+	withoutXHigh := FoldEffortVariants(effortVariantCatalogue()[:2])
+	aliased := FoldEffortVariants([]*ModelInfo{
+		{ID: "hydrogen-high", MetadataModelID: "gemini-4-hydrogen-high", Thinking: &ThinkingSupport{Levels: []string{"low", "medium", "high"}}},
+		{ID: "hydrogen-xhigh", MetadataModelID: "gemini-4-hydrogen-xhigh", Thinking: &ThinkingSupport{Levels: []string{"xhigh"}}},
+	})
+	ownNameListed := FoldEffortVariants([]*ModelInfo{
+		{ID: "claude-opus-5-5", Thinking: &ThinkingSupport{Levels: []string{"low", "high"}}},
+		{ID: "claude-opus-5-5-high", Thinking: &ThinkingSupport{Levels: []string{"low", "high"}}},
+	})
+	prefixed := FoldEffortVariants([]*ModelInfo{
+		{ID: "team/gemini-4-hydrogen-xhigh", MetadataModelID: "gemini-4-hydrogen-xhigh", Thinking: &ThinkingSupport{Levels: []string{"xhigh"}}},
+		{ID: "gemini-4-hydrogen-high", Thinking: &ThinkingSupport{Levels: []string{"high"}}},
+	})
+	// With force-model-prefix only the prefixed copies are registered: each
+	// keeps the unprefixed EffortVariantOf and records the catalogue id.
+	prefixedOnly := []*ModelInfo{
+		{ID: "team/gemini-4-hydrogen", EffortFolded: true, Thinking: &ThinkingSupport{Levels: []string{"low", "medium", "high", "xhigh"}}},
+		{ID: "team/gemini-4-hydrogen-high", EffortVariantOf: "gemini-4-hydrogen", MetadataModelID: "gemini-4-hydrogen-high", Thinking: &ThinkingSupport{Levels: []string{"low", "medium", "high"}}},
+		{ID: "team/gemini-4-hydrogen-xhigh", EffortVariantOf: "gemini-4-hydrogen", MetadataModelID: "gemini-4-hydrogen-xhigh", Thinking: &ThinkingSupport{Levels: []string{"xhigh"}}},
+	}
+	cases := []struct {
+		name                string
+		registered          []*ModelInfo
+		model, effort, want string
+		ok                  bool
+	}{
+		{"named effort", full, "gemini-4-hydrogen", "xhigh", "gemini-4-hydrogen-xhigh", true},
+		{"accepting effort", full, "gemini-4-hydrogen", "medium", "gemini-4-hydrogen-high", true},
+		{"no effort", full, "gemini-4-hydrogen", "", "gemini-4-hydrogen-xhigh", true},
+		{"case-insensitive", full, "GEMINI-4-HYDROGEN", "", "gemini-4-hydrogen-xhigh", true},
+		{"excluded variant", withoutXHigh, "gemini-4-hydrogen", "xhigh", "gemini-4-hydrogen-high", true},
+		{"aliased variant", aliased, "hydrogen", "xhigh", "gemini-4-hydrogen-xhigh", true},
+		{"aliased variant at another effort", aliased, "hydrogen", "low", "gemini-4-hydrogen-high", true},
+		{"own name listed", ownNameListed, "claude-opus-5-5", "high", "", false},
+		{"effort-named id", full, "gemini-4-hydrogen-high", "xhigh", "", false},
+		{"not registered", withoutXHigh, "gemini-4-argon", "", "", false},
+		{"prefixed copy is not a variant", prefixed, "gemini-4-hydrogen", "xhigh", "gemini-4-hydrogen-high", true},
+		{"prefixed own name", prefixedOnly, "team/gemini-4-hydrogen", "xhigh", "gemini-4-hydrogen-xhigh", true},
+		{"prefixed own name at another effort", prefixedOnly, "team/gemini-4-hydrogen", "low", "gemini-4-hydrogen-high", true},
+		{"unprefixed name of a prefixed-only registration", prefixedOnly, "gemini-4-hydrogen", "xhigh", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := RegisteredEffortVariantFor(tc.registered, tc.model, tc.effort)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("RegisteredEffortVariantFor(%q, %q) = %q, %v; want %q, %v", tc.model, tc.effort, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestGetAvailableModelFindsAnEffortNamedIDTheListsLeaveOut(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("antigravity-lookup", "antigravity", FoldEffortVariants(effortVariantCatalogue()))
+
+	for _, handlerType := range []string{"openai", "claude", "gemini"} {
+		for _, id := range []string{"gemini-4-hydrogen-xhigh", "gemini-4-hydrogen"} {
+			model := r.GetAvailableModel(handlerType, id)
+			if model == nil {
+				t.Fatalf("%s lookup of %s found nothing", handlerType, id)
+			}
+		}
+	}
+	if model := r.GetAvailableModel("gemini", "gemini-4-hydrogen-xhigh"); model["reasoning"] == nil {
+		t.Fatalf("lookup entry is not described: %v", model)
+	}
+	if model := r.GetAvailableModel("gemini", "not-registered"); model != nil {
+		t.Fatalf("lookup of an unregistered id = %v", model)
+	}
+}

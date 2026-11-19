@@ -1184,7 +1184,9 @@ func (s *Server) handleHomeGeminiModel(c *gin.Context) {
 	if !ok {
 		return
 	}
-	entries = foldHomeEffortVariants(entries)
+	// The folded entries come first so that a model's own name finds its
+	// folded entry; the effort-named ids a list leaves out still resolve.
+	entries = append(foldHomeEffortVariants(entries), entries...)
 
 	action := strings.TrimPrefix(c.Param("action"), "/")
 	action = strings.TrimSpace(action)

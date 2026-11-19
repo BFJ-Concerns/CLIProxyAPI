@@ -65,3 +65,33 @@ func TestOpenAIModelsDescribesEachModel(t *testing.T) {
 		t.Fatalf("input_modalities = %v", entry["input_modalities"])
 	}
 }
+
+// The handler copies exactly the description fields the registry writes into
+// an OpenAI-shaped entry, so a field added to one side shows here.
+func TestModelListDetailKeysMatchTheFieldsTheRegistryWrites(t *testing.T) {
+	entry := map[string]any{}
+	registry.AddModelListDetails(entry, &registry.ModelInfo{
+		ContextLength: 1, MaxCompletionTokens: 1, InputTokenLimit: 1, OutputTokenLimit: 1,
+		Thinking:                 &registry.ThinkingSupport{Min: 1, Max: 2, ZeroAllowed: true, DynamicAllowed: true, Levels: []string{"low"}},
+		SupportedInputModalities: []string{"text"}, SupportedOutputModalities: []string{"text"},
+	}, "openai", false)
+
+	written := make(map[string]bool, len(entry))
+	for key := range entry {
+		written[key] = true
+	}
+	copied := make(map[string]bool, len(modelListDetailKeys))
+	for _, key := range modelListDetailKeys {
+		copied[key] = true
+	}
+	for key := range written {
+		if !copied[key] {
+			t.Errorf("the registry writes %q but the handler does not copy it", key)
+		}
+	}
+	for key := range copied {
+		if !written[key] {
+			t.Errorf("the handler copies %q but the registry does not write it", key)
+		}
+	}
+}

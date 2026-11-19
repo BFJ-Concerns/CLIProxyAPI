@@ -53,28 +53,20 @@ func FoldEffortVariants(models []*ModelInfo) []*ModelInfo {
 	return foldEffortVariantsWhere(models, nil)
 }
 
-// FoldCatalogueEffortVariants folds, as FoldEffortVariants does, only the
-// entries whose id is a catalogue id. An entry renamed by an alias keeps its
-// configured name: EffortVariantFor resolves a folded name against the
-// catalogue, which has no variants under the alias.
-func FoldCatalogueEffortVariants(models, catalogue []*ModelInfo) []*ModelInfo {
-	ids := make(map[string]bool, len(catalogue))
-	for _, info := range catalogue {
-		if info != nil {
-			ids[strings.ToLower(strings.TrimSpace(info.ID))] = true
-		}
-	}
-	return foldEffortVariantsWhere(models, func(model *ModelInfo) bool {
-		return ids[strings.ToLower(strings.TrimSpace(model.ID))]
-	})
+// FoldEffortVariantsUnless folds as FoldEffortVariants does, except where
+// excluded reports the model's own name: those variants are left as they
+// are, listed under their own ids, since nothing stands for them.
+func FoldEffortVariantsUnless(models []*ModelInfo, excluded func(ownName string) bool) []*ModelInfo {
+	return foldEffortVariantsWhere(models, excluded)
 }
 
-func foldEffortVariantsWhere(models []*ModelInfo, foldable func(*ModelInfo) bool) []*ModelInfo {
+func foldEffortVariantsWhere(models []*ModelInfo, excluded func(ownName string) bool) []*ModelInfo {
 	foldableVariant := func(model *ModelInfo) (string, string, bool) {
-		if model == nil || (foldable != nil && !foldable(model)) {
+		base, effort, ok := isEffortVariant(model)
+		if !ok || (excluded != nil && excluded(base)) {
 			return "", "", false
 		}
-		return isEffortVariant(model)
+		return base, effort, true
 	}
 	type group struct {
 		variants []*ModelInfo
@@ -190,6 +182,7 @@ func foldedEntry(variants []*ModelInfo, efforts []string) *ModelInfo {
 	thinking.Levels = orderedLevels(accepted)
 	entry.Thinking = &thinking
 	entry.EffortVariantOf = ""
+	entry.EffortFolded = true
 	return entry
 }
 
@@ -234,24 +227,79 @@ func EffortVariantFor(catalogue []*ModelInfo, model, effort string) (string, boo
 	if model == "" {
 		return "", false
 	}
-	for _, info := range catalogue {
-		if info != nil && strings.EqualFold(strings.TrimSpace(info.ID), model) {
-			return "", false
-		}
-	}
-	effort = strings.ToLower(strings.TrimSpace(effort))
-	var best, accepting *ModelInfo
-	bestRank, acceptingRank := -1, -1
+	var variants []*ModelInfo
 	for _, info := range catalogue {
 		if info == nil {
 			continue
 		}
-		base, variantEffort, ok := isEffortVariant(info)
-		if !ok || !strings.EqualFold(base, model) {
+		if strings.EqualFold(strings.TrimSpace(info.ID), model) {
+			return "", false
+		}
+		if base, _, ok := isEffortVariant(info); ok && strings.EqualFold(base, model) {
+			variants = append(variants, info)
+		}
+	}
+	if chosen := chooseEffortVariant(variants, effort); chosen != nil {
+		return strings.TrimSpace(chosen.ID), true
+	}
+	return "", false
+}
+
+// RegisteredEffortVariantFor returns the upstream id that serves model at
+// effort when model is an entry FoldEffortVariants made in registered, a
+// credential's registered models, and false for any other model. It chooses
+// among the variants the credential registered as EffortVariantFor does, so
+// a variant the operator excluded is never chosen, and it returns the
+// catalogue id a variant renamed by an alias was made from.
+func RegisteredEffortVariantFor(registered []*ModelInfo, model, effort string) (string, bool) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "", false
+	}
+	folded := false
+	var variants []*ModelInfo
+	for _, info := range registered {
+		if info == nil {
 			continue
 		}
+		id := strings.TrimSpace(info.ID)
+		if strings.EqualFold(id, model) {
+			folded = info.EffortFolded
+			continue
+		}
+		// A variant is matched by its registered id, not by EffortVariantOf: a
+		// prefixed copy keeps the unprefixed EffortVariantOf, and stands for
+		// the prefixed own name it sits beside.
+		if base, _, ok := splitEffortSuffix(id); ok && strings.EqualFold(base, model) && info.EffortVariantOf != "" {
+			variants = append(variants, info)
+		}
+	}
+	if !folded {
+		return "", false
+	}
+	chosen := chooseEffortVariant(variants, effort)
+	if chosen == nil {
+		return "", false
+	}
+	// An alias or a credential prefix registers a copy of the catalogue entry
+	// under another id and records the catalogue id as its MetadataModelID.
+	if upstream := strings.TrimSpace(chosen.MetadataModelID); upstream != "" {
+		return upstream, true
+	}
+	return strings.TrimSpace(chosen.ID), true
+}
+
+// chooseEffortVariant picks, from effort-named entries of one model, the one
+// named for effort, then the highest-effort one that accepts effort, then the
+// highest-effort one.
+func chooseEffortVariant(variants []*ModelInfo, effort string) *ModelInfo {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	var best, accepting *ModelInfo
+	bestRank, acceptingRank := -1, -1
+	for _, info := range variants {
+		_, variantEffort, _ := splitEffortSuffix(strings.TrimSpace(info.ID))
 		if effort != "" && variantEffort == effort {
-			return strings.TrimSpace(info.ID), true
+			return info
 		}
 		rank := effortRank(variantEffort)
 		if rank > bestRank {
@@ -262,12 +310,9 @@ func EffortVariantFor(catalogue []*ModelInfo, model, effort string) (string, boo
 		}
 	}
 	if accepting != nil {
-		return strings.TrimSpace(accepting.ID), true
+		return accepting
 	}
-	if best != nil {
-		return strings.TrimSpace(best.ID), true
-	}
-	return "", false
+	return best
 }
 
 func thinkingAcceptsLevel(support *ThinkingSupport, level string) bool {
@@ -295,4 +340,26 @@ func registrationListed(registration *ModelRegistration) bool {
 		}
 	}
 	return false
+}
+
+// GetAvailableModel returns the entry for one available model in the shape
+// handlerType's lists use, or nil. Unlike the lists it includes effort-named
+// ids, since a request may still name them.
+func (r *ModelRegistry) GetAvailableModel(handlerType, modelID string) map[string]any {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return nil
+	}
+	now := r.now()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+	registration := r.models[modelID]
+	if available, _ := modelRegistrationAvailability(registration, now); !available || registration == nil || registration.Info == nil {
+		return nil
+	}
+	model := r.convertModelToMap(registration.Info, handlerType)
+	if model != nil {
+		addModelListDetails(model, listedModelInfo(registration), handlerType)
+	}
+	return model
 }
