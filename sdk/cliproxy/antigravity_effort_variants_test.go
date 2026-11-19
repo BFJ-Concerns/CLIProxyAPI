@@ -35,6 +35,29 @@ func TestAntigravityHomeLocalRegistrationResolvesFoldedNames(t *testing.T) {
 	}
 }
 
+func TestAntigravityHomeLocalRegistrationAppliesThePrefixOnce(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Home.Enabled = true
+	cfg.ForceModelPrefix = true
+	s := &Service{cfg: cfg}
+	auth := &coreauth.Auth{ID: "ag-home-local-prefix", Provider: "antigravity", Prefix: "tenant"}
+	reg := GlobalModelRegistry()
+	t.Cleanup(func() { reg.UnregisterClient(auth.ID) })
+	if !s.registerModelsForAuth(t.Context(), auth) {
+		t.Fatal("Home-mode Antigravity registration was superseded")
+	}
+
+	const modelID = "gemini-4-hydrogen"
+	if !reg.ClientSupportsModel(auth.ID, "tenant/"+modelID) {
+		t.Errorf("Home registration is missing tenant/%s", modelID)
+	}
+	for _, id := range []string{modelID, "tenant/tenant/" + modelID} {
+		if reg.ClientSupportsModel(auth.ID, id) {
+			t.Errorf("Home registration unexpectedly includes %s", id)
+		}
+	}
+}
+
 func TestAntigravityModelsAreRegisteredUnderTheirOwnNames(t *testing.T) {
 	s := &Service{}
 	auth := &coreauth.Auth{ID: "ag-effort-variants", Provider: "antigravity"}
