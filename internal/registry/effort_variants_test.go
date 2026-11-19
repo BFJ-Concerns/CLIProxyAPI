@@ -247,6 +247,13 @@ func TestRegisteredEffortVariantForDecidesFromTheRegisteredModels(t *testing.T) 
 		{ID: "team/gemini-4-hydrogen-xhigh", MetadataModelID: "gemini-4-hydrogen-xhigh", Thinking: &ThinkingSupport{Levels: []string{"xhigh"}}},
 		{ID: "gemini-4-hydrogen-high", Thinking: &ThinkingSupport{Levels: []string{"high"}}},
 	})
+	// With force-model-prefix only the prefixed copies are registered: each
+	// keeps the unprefixed EffortVariantOf and records the catalogue id.
+	prefixedOnly := []*ModelInfo{
+		{ID: "team/gemini-4-hydrogen", EffortFolded: true, Thinking: &ThinkingSupport{Levels: []string{"low", "medium", "high", "xhigh"}}},
+		{ID: "team/gemini-4-hydrogen-high", EffortVariantOf: "gemini-4-hydrogen", MetadataModelID: "gemini-4-hydrogen-high", Thinking: &ThinkingSupport{Levels: []string{"low", "medium", "high"}}},
+		{ID: "team/gemini-4-hydrogen-xhigh", EffortVariantOf: "gemini-4-hydrogen", MetadataModelID: "gemini-4-hydrogen-xhigh", Thinking: &ThinkingSupport{Levels: []string{"xhigh"}}},
+	}
 	cases := []struct {
 		name                string
 		registered          []*ModelInfo
@@ -264,6 +271,9 @@ func TestRegisteredEffortVariantForDecidesFromTheRegisteredModels(t *testing.T) 
 		{"effort-named id", full, "gemini-4-hydrogen-high", "xhigh", "", false},
 		{"not registered", withoutXHigh, "gemini-4-argon", "", "", false},
 		{"prefixed copy is not a variant", prefixed, "gemini-4-hydrogen", "xhigh", "gemini-4-hydrogen-high", true},
+		{"prefixed own name", prefixedOnly, "team/gemini-4-hydrogen", "xhigh", "gemini-4-hydrogen-xhigh", true},
+		{"prefixed own name at another effort", prefixedOnly, "team/gemini-4-hydrogen", "low", "gemini-4-hydrogen-high", true},
+		{"unprefixed name of a prefixed-only registration", prefixedOnly, "gemini-4-hydrogen", "xhigh", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

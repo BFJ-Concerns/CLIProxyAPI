@@ -267,9 +267,10 @@ func RegisteredEffortVariantFor(registered []*ModelInfo, model, effort string) (
 			folded = info.EffortFolded
 			continue
 		}
-		// A prefixed copy of a variant keeps the unprefixed EffortVariantOf;
-		// only the variant registered under its own id stands for the model.
-		if base, _, ok := splitEffortSuffix(id); ok && strings.EqualFold(base, model) && strings.EqualFold(info.EffortVariantOf, model) {
+		// A variant is matched by its registered id, not by EffortVariantOf: a
+		// prefixed copy keeps the unprefixed EffortVariantOf, and stands for
+		// the prefixed own name it sits beside.
+		if base, _, ok := splitEffortSuffix(id); ok && strings.EqualFold(base, model) && info.EffortVariantOf != "" {
 			variants = append(variants, info)
 		}
 	}
@@ -280,8 +281,8 @@ func RegisteredEffortVariantFor(registered []*ModelInfo, model, effort string) (
 	if chosen == nil {
 		return "", false
 	}
-	// An alias registers a copy of the catalogue entry under the alias and
-	// records the catalogue id as its MetadataModelID.
+	// An alias or a credential prefix registers a copy of the catalogue entry
+	// under another id and records the catalogue id as its MetadataModelID.
 	if upstream := strings.TrimSpace(chosen.MetadataModelID); upstream != "" {
 		return upstream, true
 	}
