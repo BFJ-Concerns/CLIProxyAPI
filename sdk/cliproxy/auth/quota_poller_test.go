@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -196,7 +197,7 @@ func TestQuotaPollerFinishEnforcesCadenceFloor(t *testing.T) {
 	p.schedule["acct-a"] = &quotaPollSchedule{inFlight: true}
 
 	// A success wanting an immediate re-poll is still held to the floor.
-	p.finish("acct-a", started, started.Add(time.Second), false)
+	p.finish("acct-a", started, started.Add(time.Second), false, nil)
 	sched := p.schedule["acct-a"]
 	if sched.inFlight {
 		t.Fatal("finish left the schedule in flight")
@@ -207,16 +208,17 @@ func TestQuotaPollerFinishEnforcesCadenceFloor(t *testing.T) {
 
 	// A later slot is untouched by the floor.
 	p.schedule["acct-a"].inFlight = true
-	p.finish("acct-a", started, started.Add(30*time.Minute), false)
+	p.finish("acct-a", started, started.Add(30*time.Minute), false, nil)
 	if got, want := p.schedule["acct-a"].nextPollAt, started.Add(30*time.Minute); !got.Equal(want) {
 		t.Fatalf("nextPollAt = %v, want %v", got, want)
 	}
 }
 
-func TestQuotaPollerSweepHonoursRetryAfterSuppression(t *testing.T) {
+func TestQuotaPollerRestoresRetryAfterSuppression(t *testing.T) {
 	poller, transport, auth := newCountedQuotaPoller(t, http.StatusTooManyRequests, "")
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	retryAt := now.Add(10 * time.Minute)
+	poller.statePath = filepath.Join(t.TempDir(), quotaPollStateFile)
 	transport.header = http.Header{"Retry-After": []string{"600"}}
 	poller.schedule[auth.ID] = &quotaPollSchedule{inFlight: true}
 
@@ -228,19 +230,18 @@ func TestQuotaPollerSweepHonoursRetryAfterSuppression(t *testing.T) {
 		t.Fatalf("requests after throttled poll = %d, want 1", got)
 	}
 
-	poller.sweep(now.Add(2 * time.Minute))
-	if quotaPollerInFlight(poller, auth.ID) {
-		t.Fatal("poll launched before Retry-After expiry")
-	}
-	if got := transport.count(); got != 1 {
-		t.Fatalf("requests before Retry-After expiry = %d, want 1", got)
+	poller.Stop()
+	restarted, restartedTransport, _ := newCountedQuotaPoller(t, http.StatusTooManyRequests, "")
+	restarted.statePath = poller.statePath
+	restarted.restoreState()
+
+	restarted.sweep(now.Add(2 * time.Minute))
+	if quotaPollerInFlight(restarted, auth.ID) || restartedTransport.count() != 0 {
+		t.Fatal("restart launched a poll before Retry-After expiry")
 	}
 
-	poller.sweep(retryAt)
-	waitForQuotaPollerRequest(t, transport.issued)
-	if got := transport.count(); got != 2 {
-		t.Fatalf("requests at Retry-After expiry = %d, want 2", got)
-	}
+	restarted.sweep(retryAt)
+	waitForQuotaPollerRequest(t, restartedTransport.issued)
 }
 
 func TestQuotaPollerSweepHonoursCadenceFloor(t *testing.T) {
@@ -318,30 +319,40 @@ func TestQuotaPollerTransientFailureRetainsStaleState(t *testing.T) {
 }
 
 func TestQuotaPollerPersistentFailureDegradesToNoState(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), quotaPollStateFile)
 	store := NewQuotaUsageStore()
 	p := newQuotaUsagePoller(nil, store)
 	defer p.Stop()
+	p.statePath = statePath
 	started := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	store.Set("acct-a", QuotaUsage{Session: window(10, started.Add(time.Hour))})
 	p.schedule["acct-a"] = &quotaPollSchedule{}
 
 	for i := 0; i < quotaFailureDegradeThreshold-1; i++ {
 		p.schedule["acct-a"].inFlight = true
-		p.finish("acct-a", started, started.Add(quotaFailureRetry), true)
+		p.finish("acct-a", started, started.Add(quotaFailureRetry), true, nil)
 		if _, ok := store.Get("acct-a"); !ok {
 			t.Fatalf("state dropped after %d failures, before the threshold", i+1)
 		}
 	}
-	p.schedule["acct-a"].inFlight = true
-	p.finish("acct-a", started, started.Add(quotaFailureRetry), true)
-	if _, ok := store.Get("acct-a"); ok {
+	p.Stop()
+	restarted := newQuotaUsagePoller(nil, NewQuotaUsageStore())
+	defer restarted.Stop()
+	restarted.statePath = statePath
+	restarted.restoreState()
+	if _, ok := restarted.store.Get("acct-a"); !ok {
+		t.Fatal("restart lost the last reading before the failure threshold")
+	}
+	restarted.schedule["acct-a"].inFlight = true
+	restarted.finish("acct-a", started, started.Add(quotaFailureRetry), true, nil)
+	if _, ok := restarted.store.Get("acct-a"); ok {
 		t.Fatal("state still present after the degradation threshold")
 	}
 
 	// A success resets the failure count.
-	p.schedule["acct-a"].inFlight = true
-	p.finish("acct-a", started, started.Add(time.Hour), false)
-	if got := p.schedule["acct-a"].failures; got != 0 {
+	restarted.schedule["acct-a"].inFlight = true
+	restarted.finish("acct-a", started, started.Add(time.Hour), false, nil)
+	if got := restarted.schedule["acct-a"].failures; got != 0 {
 		t.Fatalf("failures = %d after success, want 0", got)
 	}
 }

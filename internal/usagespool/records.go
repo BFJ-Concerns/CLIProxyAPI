@@ -3,10 +3,11 @@
 package usagespool
 
 import (
-	"encoding/json"
 	"fmt"
 	"sync/atomic"
 	"time"
+
+	"github.com/MoeForge/moego/json"
 )
 
 // Account identifies the credential a record belongs to in a form that

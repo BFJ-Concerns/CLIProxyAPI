@@ -310,7 +310,6 @@ func (b *Builder) Build() (*Service, error) {
 		routingState := normalizedRoutingRuntimeState(b.cfg)
 		routingSelector := newRoutingSelector(routingState)
 		coreManager = coreauth.NewManager(tokenStore, routingSelector, nil)
-		coreauth.BindQuotaPoller(coreManager, routingSelector)
 		appliedRoutingState = &routingState
 	}
 	// Attach a default RoundTripper provider so providers can opt-in per-auth transports.

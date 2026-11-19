@@ -125,6 +125,11 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 	}
 
+	// Restore quota readings after auth loading and before serving requests.
+	if s.coreManager != nil {
+		coreauth.BindQuotaPoller(s.coreManager, s.coreManager.Selector())
+	}
+
 	// legacy clients removed; no caches to refresh
 
 	s.ensureWebsocketGateway()
