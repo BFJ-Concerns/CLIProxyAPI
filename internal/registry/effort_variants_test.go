@@ -186,3 +186,15 @@ func TestModelListShowsAnIDOneProviderNamesForAnEffortAndAnotherDoesNot(t *testi
 		t.Fatal("a model another provider lists under its own id was hidden")
 	}
 }
+
+func TestEffortVariantForLeavesAnOwnNameListedAfterItsVariants(t *testing.T) {
+	catalogue := []*ModelInfo{
+		{ID: "claude-opus-5-5-high", Thinking: &ThinkingSupport{Levels: []string{"low", "medium", "high"}}},
+		{ID: "claude-opus-5-5", Thinking: &ThinkingSupport{Levels: []string{"low", "medium", "high"}}},
+	}
+	for _, effort := range []string{"", "high", "low"} {
+		if got, ok := EffortVariantFor(catalogue, "claude-opus-5-5", effort); ok {
+			t.Fatalf("EffortVariantFor(claude-opus-5-5, %q) = %q, want the own name kept", effort, got)
+		}
+	}
+}

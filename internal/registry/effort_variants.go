@@ -208,15 +208,17 @@ func EffortVariantFor(catalogue []*ModelInfo, model, effort string) (string, boo
 	if model == "" {
 		return "", false
 	}
+	for _, info := range catalogue {
+		if info != nil && strings.EqualFold(strings.TrimSpace(info.ID), model) {
+			return "", false
+		}
+	}
 	effort = strings.ToLower(strings.TrimSpace(effort))
 	var best, accepting *ModelInfo
 	bestRank, acceptingRank := -1, -1
 	for _, info := range catalogue {
 		if info == nil {
 			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(info.ID), model) {
-			return "", false
 		}
 		base, variantEffort, ok := isEffortVariant(info)
 		if !ok || !strings.EqualFold(base, model) {
