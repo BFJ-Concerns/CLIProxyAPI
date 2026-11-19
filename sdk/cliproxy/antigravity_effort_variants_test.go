@@ -3,9 +3,37 @@ package cliproxy
 import (
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
+
+func TestAntigravityHomeLocalRegistrationResolvesFoldedNames(t *testing.T) {
+	cfg := &config.Config{
+		OAuthExcludedModels: map[string][]string{"antigravity": {"claude-opus-5-5", "gemini-4-argon-high"}},
+		OAuthModelAlias: map[string][]config.OAuthModelAlias{
+			"antigravity": {{Name: "gemini-4-neon-xhigh", Alias: "neon-xhigh"}},
+		},
+	}
+	cfg.Home.Enabled = true
+	s := &Service{cfg: cfg}
+	auth := &coreauth.Auth{ID: "ag-home-local-effort", Provider: "antigravity"}
+	t.Cleanup(func() { GlobalModelRegistry().UnregisterClient(auth.ID) })
+	if !s.registerModelsForAuth(t.Context(), auth) {
+		t.Fatal("Home-mode Antigravity registration was superseded")
+	}
+
+	for _, tc := range []struct{ model, want string }{
+		{"gemini-4-hydrogen", "gemini-4-hydrogen-xhigh"},
+		{"neon", "gemini-4-neon-xhigh"},
+		{"claude-opus-5-5", "claude-opus-5-5"},
+		{"gemini-4-argon", "gemini-4-argon"},
+	} {
+		if got := helps.ResolveAntigravityEffortVariant(auth, tc.model, nil, "openai"); got != tc.want {
+			t.Errorf("ResolveAntigravityEffortVariant(%q) = %q, want %q", tc.model, got, tc.want)
+		}
+	}
+}
 
 func TestAntigravityModelsAreRegisteredUnderTheirOwnNames(t *testing.T) {
 	s := &Service{}
