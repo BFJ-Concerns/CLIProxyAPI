@@ -37,6 +37,14 @@ func AddModelListDetails(entry map[string]any, info *ModelInfo, handlerType stri
 			entry["reasoning"] = reasoning
 		}
 	case "claude":
+		// The Anthropic entry's token limits fall back to defaults when the
+		// model has none; an unknown limit is left out instead.
+		if info.ContextLength <= 0 {
+			delete(entry, "max_input_tokens")
+		}
+		if info.MaxCompletionTokens <= 0 {
+			delete(entry, "max_tokens")
+		}
 		setPositiveInt(entry, "context_length", info.ContextLength)
 		setStringList(entry, "input_modalities", info.SupportedInputModalities)
 		setStringList(entry, "output_modalities", info.SupportedOutputModalities)
