@@ -86,3 +86,37 @@ func TestGeminiGetHandlerRequiresAnAvailableCredentialForAHiddenEffortNamedID(t 
 	registryRef.ResumeClientModel(first, modelID)
 	assertStatus(http.StatusOK)
 }
+
+func TestGeminiGetHandlerKeepsTheListedOwnNameThroughAQuotaCooldown(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const modelID = "lookup-quota-model"
+	registryRef := registry.GetGlobalRegistry()
+	models := registry.FoldEffortVariants([]*registry.ModelInfo{{
+		ID: modelID + "-xhigh", Thinking: &registry.ThinkingSupport{Levels: []string{"xhigh"}},
+	}})
+	for _, clientID := range []string{"gemini-get-quota-first", "gemini-get-quota-second"} {
+		registryRef.RegisterClient(clientID, "antigravity", models)
+		t.Cleanup(func() { registryRef.UnregisterClient(clientID) })
+		registryRef.SetModelQuotaExceeded(clientID, modelID)
+	}
+
+	router := gin.New()
+	router.GET("/v1beta/models/*action", NewGeminiAPIHandler(&handlers.BaseAPIHandler{}).GeminiGetHandler)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1beta/models/"+modelID, nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d, want %d. Body: %s", modelID, recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var model map[string]any
+	if errUnmarshal := json.Unmarshal(recorder.Body.Bytes(), &model); errUnmarshal != nil {
+		t.Fatalf("decode %s: %v", modelID, errUnmarshal)
+	}
+	if model["name"] != "models/"+modelID {
+		t.Errorf("GET %s name = %v, want models/%s", modelID, model["name"], modelID)
+	}
+
+	// The handler checks the list first. Check the single-model lookup too.
+	if got := registryRef.GetAvailableModel("gemini", modelID); got["name"] != modelID {
+		t.Errorf("single-model lookup for %s = %v during quota cooldown", modelID, got)
+	}
+}
