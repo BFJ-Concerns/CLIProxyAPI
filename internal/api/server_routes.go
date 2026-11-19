@@ -1120,6 +1120,7 @@ func (s *Server) handleHomeModels(c *gin.Context) {
 		if entry.ownedBy != "" {
 			model["owned_by"] = entry.ownedBy
 		}
+		addHomeModelListDetails(model, entry, "openai")
 		filtered = append(filtered, model)
 	}
 	s.writeModelListResponse(c, "openai", gin.H{
@@ -1161,6 +1162,7 @@ func formatHomeClaudeModel(entry homeModelEntry) map[string]any {
 	if entry.created > 0 {
 		model["created_at"] = time.Unix(entry.created, 0).UTC().Format(time.RFC3339)
 	}
+	addHomeModelListDetails(model, entry, "claude")
 	return model
 }
 
@@ -1277,6 +1279,7 @@ func formatHomeGeminiModel(entry homeModelEntry) map[string]any {
 	if entry.maxCompletionTokens > 0 {
 		model["outputTokenLimit"] = entry.maxCompletionTokens
 	}
+	addHomeModelListDetails(model, entry, "gemini")
 	return model
 }
 
