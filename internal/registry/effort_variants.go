@@ -50,6 +50,32 @@ func isEffortVariant(info *ModelInfo) (base, effort string, ok bool) {
 // Entries with no thinking support are left alone: their name is the only
 // evidence of an effort, and the proxy would not apply one.
 func FoldEffortVariants(models []*ModelInfo) []*ModelInfo {
+	return foldEffortVariantsWhere(models, nil)
+}
+
+// FoldCatalogueEffortVariants folds, as FoldEffortVariants does, only the
+// entries whose id is a catalogue id. An entry renamed by an alias keeps its
+// configured name: EffortVariantFor resolves a folded name against the
+// catalogue, which has no variants under the alias.
+func FoldCatalogueEffortVariants(models, catalogue []*ModelInfo) []*ModelInfo {
+	ids := make(map[string]bool, len(catalogue))
+	for _, info := range catalogue {
+		if info != nil {
+			ids[strings.ToLower(strings.TrimSpace(info.ID))] = true
+		}
+	}
+	return foldEffortVariantsWhere(models, func(model *ModelInfo) bool {
+		return ids[strings.ToLower(strings.TrimSpace(model.ID))]
+	})
+}
+
+func foldEffortVariantsWhere(models []*ModelInfo, foldable func(*ModelInfo) bool) []*ModelInfo {
+	foldableVariant := func(model *ModelInfo) (string, string, bool) {
+		if model == nil || (foldable != nil && !foldable(model)) {
+			return "", "", false
+		}
+		return isEffortVariant(model)
+	}
 	type group struct {
 		variants []*ModelInfo
 		efforts  []string
@@ -63,7 +89,7 @@ func FoldEffortVariants(models []*ModelInfo) []*ModelInfo {
 		existing[strings.ToLower(strings.TrimSpace(model.ID))] = model
 	}
 	for _, model := range models {
-		base, effort, ok := isEffortVariant(model)
+		base, effort, ok := foldableVariant(model)
 		if !ok {
 			continue
 		}
@@ -96,7 +122,7 @@ func FoldEffortVariants(models []*ModelInfo) []*ModelInfo {
 			out = append(out, model)
 			continue
 		}
-		base, _, ok := isEffortVariant(model)
+		base, _, ok := foldableVariant(model)
 		if !ok {
 			out = append(out, model)
 			continue

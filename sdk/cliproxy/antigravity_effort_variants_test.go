@@ -37,3 +37,26 @@ func TestAntigravityModelsAreRegisteredUnderTheirOwnNames(t *testing.T) {
 		t.Fatal("a model the account's catalogue does not offer was registered")
 	}
 }
+
+func TestAntigravityAliasedModelsKeepTheirConfiguredNames(t *testing.T) {
+	s := &Service{}
+	auth := &coreauth.Auth{ID: "ag-effort-alias", Provider: "antigravity"}
+	hints := antigravityModelCapabilityHints{ModelIDs: map[string]struct{}{"claude-opus-5-5-high": {}}}
+	cfg := &config.Config{}
+	cfg.OAuthModelAlias = map[string][]config.OAuthModelAlias{
+		"antigravity": {{Name: "claude-opus-5-5-high", Alias: "my-opus-high"}},
+	}
+
+	models := s.antigravityModelsForHintsWithConfig(auth, hints, cfg)
+
+	byID := make(map[string]*ModelInfo, len(models))
+	for _, model := range models {
+		byID[model.ID] = model
+	}
+	if byID["my-opus-high"] == nil || byID["my-opus-high"].EffortVariantOf != "" {
+		t.Fatalf("configured alias my-opus-high is not listed: %v", byID["my-opus-high"])
+	}
+	if _, ok := byID["my-opus"]; ok {
+		t.Fatal("an alias was folded into a name nothing can resolve")
+	}
+}
