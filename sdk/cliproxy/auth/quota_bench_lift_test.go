@@ -213,6 +213,7 @@ func TestQuotaPoll_SuccessfulPollLiftsBench(t *testing.T) {
 	}
 
 	current, _ := manager.GetByID(auth.ID)
+	poller.schedule[auth.ID] = &quotaPollSchedule{inFlight: true}
 	poller.poll(current, time.Now())
 	if transport.count() != 1 {
 		t.Fatalf("poll requests = %d, want 1", transport.count())
