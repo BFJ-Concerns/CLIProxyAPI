@@ -332,10 +332,12 @@ func TestLiftWindowBenches_UsesSessionRejectionLevel(t *testing.T) {
 
 func TestLiftWindowBenches_PreservesForceAndNonQuotaCooldowns(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		err  *Error
+		name            string
+		err             *Error
+		credentialScope bool
 	}{
 		{name: "force", err: &Error{HTTPStatus: http.StatusTooManyRequests, Code: ErrorCodeForceCooldown}},
+		{name: "credential-force", err: &Error{HTTPStatus: http.StatusTooManyRequests, Code: ErrorCodeForceCooldown}, credentialScope: true},
 		{name: "non-quota", err: &Error{HTTPStatus: http.StatusServiceUnavailable}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -345,12 +347,15 @@ func TestLiftWindowBenches_PreservesForceAndNonQuotaCooldowns(t *testing.T) {
 			headers := weeklyRejectionHeaders(reset)
 			// An overlapping 503 must survive even when the earlier quota rejection can be lifted.
 			if tc.err.HTTPStatus == http.StatusServiceUnavailable {
-				benchClaude(manager, authID, benchLiftOpusModel, false, time.Until(reset), headers)
+				benchClaude(manager, authID, benchLiftOpusModel, tc.credentialScope, time.Until(reset), headers)
 				headers = nil
 			}
-			markClaudeCooldown(manager, authID, benchLiftOpusModel, false, time.Until(reset), headers, tc.err)
+			markClaudeCooldown(manager, authID, benchLiftOpusModel, tc.credentialScope, time.Until(reset), headers, tc.err)
 			if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
 				t.Fatal("cooldown did not withhold the model")
+			}
+			if got := benchLiftAvailable(t, manager, authID, benchLiftFableModel); got == tc.credentialScope {
+				t.Fatalf("unrelated model available = %t for credential scope %t", got, tc.credentialScope)
 			}
 
 			now := time.Now()
@@ -359,6 +364,9 @@ func TestLiftWindowBenches_PreservesForceAndNonQuotaCooldowns(t *testing.T) {
 			}, now, now)
 			if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
 				t.Fatal("poll showing headroom cleared a protected cooldown")
+			}
+			if tc.credentialScope && benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
+				t.Fatal("poll showing headroom freed another model on the force-cooled credential")
 			}
 		})
 	}
