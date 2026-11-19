@@ -25,7 +25,7 @@ import (
 
 // Execute performs a non-streaming request to the Antigravity API.
 func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
-	req.Model = helps.ResolveAntigravityEffortVariant(req.Model, req.Payload, opts.SourceFormat.String())
+	req.Model = helps.ResolveAntigravityEffortVariant(auth, req.Model, req.Payload, opts.SourceFormat.String())
 	if helps.HasResponsesCompactionItem(req.Payload) {
 		expanded, errExpand := helps.ExpandAntigravityCompactionCapsules(req.Payload)
 		if errExpand != nil {

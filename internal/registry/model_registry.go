@@ -46,6 +46,10 @@ type ModelInfo struct {
 	// EffortVariantOf names the model this entry serves at one reasoning
 	// effort. Such an entry stays requestable but is left out of model lists.
 	EffortVariantOf string `json:"-"`
+	// EffortFolded marks an entry made from effort-named entries, which has
+	// no catalogue id of its own: a request for it is served by one of the
+	// entries marked EffortVariantOf its id.
+	EffortFolded bool `json:"-"`
 	// ExplicitThinking indicates thinking/reasoning configuration was explicitly configured for this model.
 	ExplicitThinking bool `json:"-"`
 	// ExplicitInputModalities indicates input modalities were explicitly configured for this model.
