@@ -1100,10 +1100,50 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		return nil, nil, fmt.Errorf("auth id is required")
 	}
 
-	now := time.Now()
-	var snapshot *Auth
 	models := make([]string, 0)
 	registeredModels := modelsForRegisteredAuth(authID)
+	snapshot, errPersist := m.commitCooldownEdit(ctx, authID, func(auth *Auth, now time.Time) bool {
+		for modelKey, state := range auth.ModelStates {
+			if strings.TrimSpace(modelKey) == "" {
+				continue
+			}
+			models = append(models, modelKey)
+			if state != nil {
+				resetModelState(state, now)
+			}
+		}
+		if clearCooldownStateForAuth(auth, now) {
+			if len(models) == 0 {
+				models = append(models, registeredModels...)
+			}
+		} else if len(auth.ModelStates) > 0 {
+			updateAggregatedAvailability(auth, now)
+		}
+
+		if len(models) == 0 {
+			models = append(models, registeredModels...)
+		}
+		models = dedupeStrings(models)
+		return true
+	})
+	if errPersist != nil {
+		return nil, nil, errPersist
+	}
+	if snapshot == nil {
+		return nil, nil, nil
+	}
+	return snapshot, models, nil
+}
+
+// commitCooldownEdit applies edit to the auth under the per-auth mutation
+// gate and, when edit reports a change, commits it: the status is reset
+// when no model error or unauthorized failure remains, the generation is
+// bumped, and the auth, the cooldown store, the registry projections and
+// the scheduler are brought up to date. It returns the committed snapshot,
+// or nil when the auth is missing or edit changed nothing.
+func (m *Manager) commitCooldownEdit(ctx context.Context, authID string, edit func(auth *Auth, now time.Time) bool) (*Auth, error) {
+	now := time.Now()
+	var snapshot *Auth
 	cooldownStateChanged := false
 
 	releaseMutation := m.lockAuthMutation(authID)
@@ -1112,7 +1152,7 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 	auth, ok := m.auths[authID]
 	if !ok || auth == nil {
 		m.mu.Unlock()
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	var cooldownRecordsBefore []CooldownStateRecord
@@ -1121,27 +1161,10 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		cooldownRecordsBefore = m.cooldownStateRecordsForAuthLocked(auth, now)
 	}
 
-	for modelKey, state := range auth.ModelStates {
-		if strings.TrimSpace(modelKey) == "" {
-			continue
-		}
-		models = append(models, modelKey)
-		if state != nil {
-			resetModelState(state, now)
-		}
+	if !edit(auth, now) {
+		m.mu.Unlock()
+		return nil, nil
 	}
-	if clearCooldownStateForAuth(auth, now) {
-		if len(models) == 0 {
-			models = append(models, registeredModels...)
-		}
-	} else if len(auth.ModelStates) > 0 {
-		updateAggregatedAvailability(auth, now)
-	}
-
-	if len(models) == 0 {
-		models = append(models, registeredModels...)
-	}
-	models = dedupeStrings(models)
 
 	if !auth.Disabled && auth.Status != StatusDisabled && !hasModelError(auth, now) {
 		if !hasUnauthorizedAuthFailure(auth) {
@@ -1182,9 +1205,9 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		m.scheduler.upsertAuth(snapshot)
 	}
 	if errPersist != nil {
-		return nil, nil, errPersist
+		return nil, errPersist
 	}
-	return snapshot, models, nil
+	return snapshot, nil
 }
 
 func modelsForRegisteredAuth(authID string) []string {

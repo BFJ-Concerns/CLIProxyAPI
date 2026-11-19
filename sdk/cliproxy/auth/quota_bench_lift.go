@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 )
 
 // liftWindowBenches lifts every 429 bench on the credential — the
@@ -28,77 +26,37 @@ func (m *Manager) liftWindowBenches(authID string, usage QuotaUsage, polledAt, n
 	if m == nil || strings.TrimSpace(authID) == "" {
 		return
 	}
-	releaseMutation := m.lockAuthMutation(authID)
-	m.mu.Lock()
-	auth, ok := m.auths[authID]
-	if !ok || auth == nil || auth.Disabled || auth.Status == StatusDisabled || hasUnauthorizedAuthFailure(auth) {
-		m.mu.Unlock()
-		releaseMutation()
-		return
-	}
-
-	trackCooldownState := m.cooldownStore != nil
-	var cooldownRecordsBefore []CooldownStateRecord
-	if trackCooldownState {
-		cooldownRecordsBefore = m.cooldownStateRecordsForAuthLocked(auth, now)
-	}
-
 	var lifted []string
-	if credentialBenchLiftable(auth, usage, polledAt, now) {
-		// The same unwinding a successful request performs: the credential
-		// layer is dropped and each model's independent bench is reinstated
-		// for the loop below to judge on its own windows.
-		clearAuthStateOnSuccess(auth, now)
-		lifted = append(lifted, "credential")
-	}
-	for modelKey, state := range auth.ModelStates {
-		if modelBenchLiftable(state, usage, polledAt, now) {
-			resetModelState(state, now)
-			lifted = append(lifted, modelKey)
+	_, errCommit := m.commitCooldownEdit(context.Background(), authID, func(auth *Auth, _ time.Time) bool {
+		if auth.Disabled || auth.Status == StatusDisabled || hasUnauthorizedAuthFailure(auth) {
+			return false
 		}
-	}
-	if len(lifted) == 0 {
-		m.mu.Unlock()
-		releaseMutation()
-		return
-	}
-
-	updateAggregatedAvailability(auth, now)
-	if !hasModelError(auth, now) {
-		auth.LastError = nil
-		auth.StatusMessage = ""
-		auth.Status = StatusActive
-	}
-	auth.Generation++
-	auth.UpdatedAt = now
-	snapshot := auth.Clone()
-	cooldownStateChanged := false
-	if trackCooldownState {
-		cooldownStateChanged = !cooldownStateRecordsEqual(cooldownRecordsBefore, m.cooldownStateRecordsForAuthLocked(auth, now))
-	}
-	errPersist := m.persistLocked(context.Background(), auth)
-	m.mu.Unlock()
-	releaseMutation()
-
-	if errPersist != nil {
-		logEntryWithRequestID(context.Background()).WithField("auth_id", authID).Warnf("failed to persist lifted quota bench: %v", errPersist)
-	}
-	if cooldownStateChanged {
-		m.persistCooldownStates(context.Background())
-	}
-	supportedModels, regEpoch := registry.GetGlobalRegistry().GetModelsAndEpochForClient(authID)
-	projections := make([]registry.ClientModelProjection, 0, len(supportedModels))
-	for _, supportedModel := range supportedModels {
-		if supportedModel == nil || strings.TrimSpace(supportedModel.ID) == "" {
-			continue
+		if credentialBenchLiftable(auth, usage, polledAt, now) {
+			// The same unwinding a successful request performs: the
+			// credential layer is dropped and each model's independent
+			// bench is reinstated for the loop below to judge on its own
+			// windows.
+			clearAuthStateOnSuccess(auth, now)
+			lifted = append(lifted, "credential")
 		}
-		projections = append(projections, m.clientModelProjectionForAuth(snapshot, supportedModel.ID, now))
+		for modelKey, state := range auth.ModelStates {
+			if modelBenchLiftable(state, usage, polledAt, now) {
+				resetModelState(state, now)
+				lifted = append(lifted, modelKey)
+			}
+		}
+		if len(lifted) == 0 {
+			return false
+		}
+		updateAggregatedAvailability(auth, now)
+		return true
+	})
+	if errCommit != nil {
+		logEntryWithRequestID(context.Background()).WithField("auth_id", authID).Warnf("failed to persist lifted quota bench: %v", errCommit)
 	}
-	registry.GetGlobalRegistry().ApplyClientModelProjections(authID, regEpoch, snapshot.Generation, projections)
-	if m.scheduler != nil {
-		m.scheduler.upsertAuth(snapshot)
+	if len(lifted) > 0 {
+		logEntryWithRequestID(context.Background()).WithField("auth_id", authID).Infof("quota poll shows headroom in the benched window; lifted benches=%s", strings.Join(lifted, ","))
 	}
-	logEntryWithRequestID(context.Background()).WithField("auth_id", authID).Infof("quota poll shows headroom in the benched window; lifted benches=%s", strings.Join(lifted, ","))
 }
 
 // credentialBenchLiftable reports whether the credential carries a live
