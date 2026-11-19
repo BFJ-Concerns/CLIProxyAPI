@@ -164,3 +164,21 @@ func TestModelListShowsEveryEffortAnyProviderAccepts(t *testing.T) {
 		t.Fatalf("efforts after a provider left = %v", got)
 	}
 }
+
+func TestAnthropicModelListUsesAModelsOwnInputAndOutputLimits(t *testing.T) {
+	listed := listedByKey(describedModelRegistry().GetAvailableModels("claude"), "id")
+
+	budget := listed["budget-model"]
+	if budget["max_input_tokens"] != 1048576 || budget["max_tokens"] != 65536 {
+		t.Fatalf("budget-model limits = %v / %v, want its input and output limits", budget["max_input_tokens"], budget["max_tokens"])
+	}
+	plain := listed["plain-model"]
+	if plain["max_input_tokens"] != 128000 || plain["max_tokens"] != 8192 {
+		t.Fatalf("plain-model limits = %v / %v", plain["max_input_tokens"], plain["max_tokens"])
+	}
+	for _, key := range []string{"max_input_tokens", "max_tokens"} {
+		if got, ok := listed["user-model"][key]; ok {
+			t.Fatalf("user-model guesses %s = %v", key, got)
+		}
+	}
+}

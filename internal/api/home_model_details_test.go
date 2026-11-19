@@ -89,3 +89,16 @@ func TestHomeModelListsShowEveryEffortAnyRouteAccepts(t *testing.T) {
 		}
 	}
 }
+
+func TestHomeGeminiModelListCarriesModalities(t *testing.T) {
+	entries, errDecode := decodeHomeModels([]byte(`{
+		"gemini": [{"id": "described", "supportedInputModalities": ["text", "image"], "supportedOutputModalities": ["text"]}]
+	}`))
+	if errDecode != nil {
+		t.Fatalf("decodeHomeModels: %v", errDecode)
+	}
+	gemini := formatHomeGeminiModel(entries[0])
+	if !reflect.DeepEqual(gemini["supportedInputModalities"], []string{"text", "image"}) || !reflect.DeepEqual(gemini["supportedOutputModalities"], []string{"text"}) {
+		t.Fatalf("gemini entry = %v", gemini)
+	}
+}

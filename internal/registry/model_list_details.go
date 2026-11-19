@@ -38,13 +38,11 @@ func AddModelListDetails(entry map[string]any, info *ModelInfo, handlerType stri
 		}
 	case "claude":
 		// The Anthropic entry's token limits fall back to defaults when the
-		// model has none; an unknown limit is left out instead.
-		if info.ContextLength <= 0 {
-			delete(entry, "max_input_tokens")
-		}
-		if info.MaxCompletionTokens <= 0 {
-			delete(entry, "max_tokens")
-		}
+		// model has no context length or completion limit; the model's own
+		// input and output limits are used instead, and an unknown limit is
+		// left out.
+		setOrDeleteLimit(entry, "max_input_tokens", info.ContextLength, info.InputTokenLimit)
+		setOrDeleteLimit(entry, "max_tokens", info.MaxCompletionTokens, info.OutputTokenLimit)
 		setPositiveInt(entry, "context_length", info.ContextLength)
 		setStringList(entry, "input_modalities", info.SupportedInputModalities)
 		setStringList(entry, "output_modalities", info.SupportedOutputModalities)
@@ -56,6 +54,10 @@ func AddModelListDetails(entry map[string]any, info *ModelInfo, handlerType stri
 			entry["capabilities"] = capabilities
 		}
 	case "gemini":
+		setPositiveInt(entry, "inputTokenLimit", firstPositive(info.InputTokenLimit, info.ContextLength))
+		setPositiveInt(entry, "outputTokenLimit", firstPositive(info.OutputTokenLimit, info.MaxCompletionTokens))
+		setStringList(entry, "supportedInputModalities", info.SupportedInputModalities)
+		setStringList(entry, "supportedOutputModalities", info.SupportedOutputModalities)
 		if reasoning := reasoningDescription(info, camelCaseReasoningKeys, unsetThinkingIsUnknown); reasoning != nil {
 			entry["reasoning"] = reasoning
 			entry["thinking"] = reasoning["supported"]
@@ -139,6 +141,25 @@ func setPositiveInt(entry map[string]any, key string, value int) {
 	if value > 0 {
 		entry[key] = value
 	}
+}
+
+// setOrDeleteLimit sets key to the first known limit, or removes it when
+// neither is known.
+func setOrDeleteLimit(entry map[string]any, key string, limits ...int) {
+	if limit := firstPositive(limits...); limit > 0 {
+		entry[key] = limit
+		return
+	}
+	delete(entry, key)
+}
+
+func firstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func setStringList(entry map[string]any, key string, values []string) {
