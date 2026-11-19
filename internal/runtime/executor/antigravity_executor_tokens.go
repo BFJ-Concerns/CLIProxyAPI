@@ -20,6 +20,7 @@ import (
 
 // CountTokens counts tokens for the given request using the Antigravity API.
 func (e *AntigravityExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	req.Model = helps.ResolveAntigravityEffortVariant(req.Model, req.Payload, opts.SourceFormat.String())
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	if antigravityInTOSPause(e.cfg, auth) {
 		return cliproxyexecutor.Response{}, statusErr{code: http.StatusServiceUnavailable, msg: "antigravity pool paused after TOS_VIOLATION"}
