@@ -116,7 +116,7 @@ func TestLiftWindowBenches_CredentialBenchLiftsWhenWeeklyReadingFalls(t *testing
 	manager.liftWindowBenches(authID, QuotaUsage{
 		Session: &QuotaWindow{Percent: 20, ResetsAt: time.Now().Add(2 * time.Hour)},
 		Weekly:  &QuotaWindow{Percent: 100, ResetsAt: weeklyReset},
-	}, time.Now())
+	}, time.Now(), time.Now())
 	if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
 		t.Fatal("bench lifted while the weekly window still read full")
 	}
@@ -125,7 +125,7 @@ func TestLiftWindowBenches_CredentialBenchLiftsWhenWeeklyReadingFalls(t *testing
 	manager.liftWindowBenches(authID, QuotaUsage{
 		Session: &QuotaWindow{Percent: 20, ResetsAt: time.Now().Add(2 * time.Hour)},
 		Weekly:  &QuotaWindow{Percent: 4, ResetsAt: weeklyReset},
-	}, time.Now())
+	}, time.Now(), time.Now())
 	if !benchLiftAvailable(t, manager, authID, benchLiftOpusModel) || !benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
 		t.Fatal("credential-wide bench survived a poll showing weekly headroom")
 	}
@@ -152,7 +152,7 @@ func TestLiftWindowBenches_ModelBenchLiftsWhenFableReadingFalls(t *testing.T) {
 	manager.liftWindowBenches(authID, QuotaUsage{
 		Weekly: &QuotaWindow{Percent: 30, ResetsAt: fableReset},
 		Fable:  &QuotaWindow{Percent: 100, ResetsAt: fableReset},
-	}, time.Now())
+	}, time.Now(), time.Now())
 	if benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
 		t.Fatal("Fable bench lifted while the Fable window still read full")
 	}
@@ -160,7 +160,7 @@ func TestLiftWindowBenches_ModelBenchLiftsWhenFableReadingFalls(t *testing.T) {
 	manager.liftWindowBenches(authID, QuotaUsage{
 		Weekly: &QuotaWindow{Percent: 30, ResetsAt: fableReset},
 		Fable:  &QuotaWindow{Percent: 0, ResetsAt: time.Now().Add(7 * 24 * time.Hour)},
-	}, time.Now())
+	}, time.Now(), time.Now())
 	if !benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
 		t.Fatal("Fable bench survived a poll showing Fable headroom")
 	}
@@ -177,7 +177,7 @@ func TestLiftWindowBenches_CredentialLiftKeepsModelBenchOnFullWindow(t *testing.
 	manager.liftWindowBenches(authID, QuotaUsage{
 		Weekly: &QuotaWindow{Percent: 10, ResetsAt: weeklyReset},
 		Fable:  &QuotaWindow{Percent: 100, ResetsAt: fableReset},
-	}, time.Now())
+	}, time.Now(), time.Now())
 	if !benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
 		t.Fatal("credential-wide bench survived a poll showing weekly headroom")
 	}
@@ -195,7 +195,7 @@ func TestLiftWindowBenches_BenchWithoutWindowSignalsStands(t *testing.T) {
 		Session: &QuotaWindow{Percent: 0},
 		Weekly:  &QuotaWindow{Percent: 0},
 		Fable:   &QuotaWindow{Percent: 0},
-	}, time.Now())
+	}, time.Now(), time.Now())
 	if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) {
 		t.Fatal("a bench recorded without window signals was lifted")
 	}
@@ -219,5 +219,33 @@ func TestQuotaPoll_SuccessfulPollLiftsBench(t *testing.T) {
 	}
 	if !benchLiftAvailable(t, manager, auth.ID, benchLiftOpusModel) {
 		t.Fatal("successful poll showing weekly headroom did not lift the bench")
+	}
+}
+
+func TestLiftWindowBenches_BenchRecordedAfterPollStartStands(t *testing.T) {
+	authID := "bench-lift-stale-poll"
+	manager, _ := newBenchLiftManager(t, authID)
+	weeklyReset := time.Now().Add(3 * 24 * time.Hour)
+	fableReset := time.Now().Add(4 * 24 * time.Hour)
+
+	// The poll starts and reads headroom; the 429s that exhaust the
+	// windows are recorded before its reading arrives.
+	polledAt := time.Now().Add(-time.Second)
+	benchClaude(manager, authID, benchLiftFableModel, false, time.Until(fableReset), fableRejectionHeaders(fableReset))
+	benchClaude(manager, authID, benchLiftOpusModel, true, time.Until(weeklyReset), weeklyRejectionHeaders(weeklyReset))
+
+	staleReading := QuotaUsage{
+		Weekly: &QuotaWindow{Percent: 40, ResetsAt: weeklyReset},
+		Fable:  &QuotaWindow{Percent: 40, ResetsAt: fableReset},
+	}
+	manager.liftWindowBenches(authID, staleReading, polledAt, time.Now())
+	if benchLiftAvailable(t, manager, authID, benchLiftOpusModel) || benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
+		t.Fatal("a poll that started before the benches were recorded lifted them")
+	}
+
+	// A poll started after the benches judges them.
+	manager.liftWindowBenches(authID, staleReading, time.Now(), time.Now())
+	if !benchLiftAvailable(t, manager, authID, benchLiftOpusModel) || !benchLiftAvailable(t, manager, authID, benchLiftFableModel) {
+		t.Fatal("a poll started after the benches did not lift them")
 	}
 }

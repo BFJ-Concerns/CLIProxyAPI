@@ -21,8 +21,10 @@ import (
 // all read below the utilisation they were rejected at in the freshly
 // polled usage. A bench whose windows cannot be judged from the poll (no
 // recorded rejection signals, a window the poll does not report) and
-// force cooldowns are left to run out.
-func (m *Manager) liftWindowBenches(authID string, usage QuotaUsage, now time.Time) {
+// force cooldowns are left to run out. polledAt is when the poll started:
+// a bench recorded after it may come from a request that exhausted the
+// window after the poll read it, so it is left for the next poll to judge.
+func (m *Manager) liftWindowBenches(authID string, usage QuotaUsage, polledAt, now time.Time) {
 	if m == nil || strings.TrimSpace(authID) == "" {
 		return
 	}
@@ -42,7 +44,7 @@ func (m *Manager) liftWindowBenches(authID string, usage QuotaUsage, now time.Ti
 	}
 
 	var lifted []string
-	if credentialBenchLiftable(auth, usage, now) {
+	if credentialBenchLiftable(auth, usage, polledAt, now) {
 		// The same unwinding a successful request performs: the credential
 		// layer is dropped and each model's independent bench is reinstated
 		// for the loop below to judge on its own windows.
@@ -50,7 +52,7 @@ func (m *Manager) liftWindowBenches(authID string, usage QuotaUsage, now time.Ti
 		lifted = append(lifted, "credential")
 	}
 	for modelKey, state := range auth.ModelStates {
-		if modelBenchLiftable(state, usage, now) {
+		if modelBenchLiftable(state, usage, polledAt, now) {
 			resetModelState(state, now)
 			lifted = append(lifted, modelKey)
 		}
@@ -101,9 +103,11 @@ func (m *Manager) liftWindowBenches(authID string, usage QuotaUsage, now time.Ti
 
 // credentialBenchLiftable reports whether the credential carries a live
 // credential-wide 429 bench, not held by a force cooldown or a non-quota
-// retry deadline, whose rejected windows all have headroom again.
-func credentialBenchLiftable(auth *Auth, usage QuotaUsage, now time.Time) bool {
-	if !auth.Quota.Exceeded || !auth.Quota.NextRecoverAt.After(now) {
+// retry deadline, whose rejected windows all have headroom again. The
+// credential carries no bench-recording time of its own, so any update to
+// it after the poll started holds the bench for the next poll.
+func credentialBenchLiftable(auth *Auth, usage QuotaUsage, polledAt, now time.Time) bool {
+	if !auth.Quota.Exceeded || !auth.Quota.NextRecoverAt.After(now) || auth.UpdatedAt.After(polledAt) {
 		return false
 	}
 	if auth.Quota.Reason != "credential_quota" && len(auth.ModelStates) > 0 {
@@ -118,15 +122,16 @@ func credentialBenchLiftable(auth *Auth, usage QuotaUsage, now time.Time) bool {
 
 // modelBenchLiftable reports whether a model state carries its own live 429
 // bench (not one propagated from a still-live credential bench, and not a
-// force cooldown) whose rejected windows all have headroom again.
-func modelBenchLiftable(state *ModelState, usage QuotaUsage, now time.Time) bool {
+// force cooldown), recorded before the poll started, whose rejected
+// windows all have headroom again.
+func modelBenchLiftable(state *ModelState, usage QuotaUsage, polledAt, now time.Time) bool {
 	if state == nil || state.Status == StatusDisabled {
 		return false
 	}
 	if state.credentialQuotaPropagated || state.Quota.Reason == "credential_quota" {
 		return false
 	}
-	if !state.Quota.Exceeded || !state.Quota.NextRecoverAt.After(now) {
+	if !state.Quota.Exceeded || !state.Quota.NextRecoverAt.After(now) || state.UpdatedAt.After(polledAt) {
 		return false
 	}
 	if effectiveModelForceUntil(state).After(now) || state.quotaForceCooldownUntil.After(now) || state.nonQuotaCooldownUntil.After(now) {
