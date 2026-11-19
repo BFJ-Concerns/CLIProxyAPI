@@ -76,7 +76,7 @@ func TestFoldEffortVariantsListsEachModelOnceWithEveryEffort(t *testing.T) {
 	}
 }
 
-func TestFoldEffortVariantsMergesIntoAnEntryUnderTheModelsOwnName(t *testing.T) {
+func TestFoldEffortVariantsKeepsAnEntryUnderTheModelsOwnName(t *testing.T) {
 	folded := FoldEffortVariants([]*ModelInfo{
 		{ID: "gemini-3-flash-high", Thinking: &ThinkingSupport{Levels: []string{"high"}}},
 		{ID: "gemini-3-flash", DisplayName: "Gemini 3 Flash", Thinking: &ThinkingSupport{Levels: []string{"minimal", "low"}}},
@@ -84,8 +84,8 @@ func TestFoldEffortVariantsMergesIntoAnEntryUnderTheModelsOwnName(t *testing.T) 
 	if got := modelIDs(folded); !reflect.DeepEqual(got, []string{"gemini-3-flash-high", "gemini-3-flash"}) {
 		t.Fatalf("folded ids = %v", got)
 	}
-	if got := folded[1].Thinking.Levels; !reflect.DeepEqual(got, []string{"minimal", "low", "high"}) {
-		t.Fatalf("own entry levels = %v", got)
+	if got := folded[1].Thinking.Levels; !reflect.DeepEqual(got, []string{"minimal", "low"}) {
+		t.Fatalf("own entry levels = %v, want the efforts the own entry serves", got)
 	}
 	if folded[0].EffortVariantOf != "gemini-3-flash" {
 		t.Fatalf("variant marked as %q", folded[0].EffortVariantOf)

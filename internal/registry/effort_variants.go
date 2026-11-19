@@ -44,7 +44,8 @@ func isEffortVariant(info *ModelInfo) (base, effort string, ok bool) {
 // FoldEffortVariants gives each model that a catalogue names for single
 // reasoning efforts one entry under the model's own name. That entry accepts
 // every effort its variants accept, and is placed where the first variant
-// was. The variants stay in the result, marked with EffortVariantOf, so that
+// was. Where the catalogue also lists the model under its own name, that
+// entry stands as it is: requests for the name are served by it. The variants stay in the result, marked with EffortVariantOf, so that
 // requests naming them keep working while model lists leave them out.
 // Entries with no thinking support are left alone: their name is the only
 // evidence of an effort, and the proxy would not apply one.
@@ -87,10 +88,12 @@ func FoldEffortVariants(models []*ModelInfo) []*ModelInfo {
 			continue
 		}
 		key := strings.ToLower(strings.TrimSpace(model.ID))
-		if g, isBase := groups[key]; isBase && !placed[key] {
-			// The catalogue already lists the model under its own name.
+		if _, isBase := groups[key]; isBase && !placed[key] {
+			// The catalogue already lists the model under its own name, and a
+			// request for that name is served by that entry, so it keeps the
+			// efforts it accepts.
 			placed[key] = true
-			out = append(out, foldedEntry(model, g.variants, g.efforts))
+			out = append(out, model)
 			continue
 		}
 		base, _, ok := isEffortVariant(model)
@@ -103,7 +106,7 @@ func FoldEffortVariants(models []*ModelInfo) []*ModelInfo {
 		if !placed[baseKey] {
 			if _, listedLater := existing[baseKey]; !listedLater {
 				placed[baseKey] = true
-				out = append(out, foldedEntry(nil, g.variants, g.efforts))
+				out = append(out, foldedEntry(g.variants, g.efforts))
 			}
 		}
 		variant := cloneModelInfo(model)
@@ -113,30 +116,24 @@ func FoldEffortVariants(models []*ModelInfo) []*ModelInfo {
 	return out
 }
 
-// foldedEntry builds the single entry for a model from its effort variants.
-// It starts from own (the catalogue's entry under the model's own name) when
-// there is one, otherwise from the variant named for the highest effort.
-func foldedEntry(own *ModelInfo, variants []*ModelInfo, efforts []string) *ModelInfo {
+// foldedEntry builds the single entry for a model from its effort variants,
+// starting from the variant named for the highest effort.
+func foldedEntry(variants []*ModelInfo, efforts []string) *ModelInfo {
 	representative := 0
 	for i := range variants {
 		if effortRank(efforts[i]) > effortRank(efforts[representative]) {
 			representative = i
 		}
 	}
-	var entry *ModelInfo
-	if own != nil {
-		entry = cloneModelInfo(own)
-	} else {
-		source := variants[representative]
-		base, _, _ := splitEffortSuffix(strings.TrimSpace(source.ID))
-		entry = cloneModelInfo(source)
-		if strings.EqualFold(strings.TrimSpace(entry.Name), strings.TrimSpace(entry.ID)) {
-			entry.Name = base
-		}
-		entry.ID = base
-		entry.DisplayName = trimEffortLabel(entry.DisplayName, efforts[representative])
-		entry.Description = trimEffortLabel(entry.Description, efforts[representative])
+	source := variants[representative]
+	base, _, _ := splitEffortSuffix(strings.TrimSpace(source.ID))
+	entry := cloneModelInfo(source)
+	if strings.EqualFold(strings.TrimSpace(entry.Name), strings.TrimSpace(entry.ID)) {
+		entry.Name = base
 	}
+	entry.ID = base
+	entry.DisplayName = trimEffortLabel(entry.DisplayName, efforts[representative])
+	entry.Description = trimEffortLabel(entry.Description, efforts[representative])
 
 	accepted := make(map[string]bool)
 	var thinking ThinkingSupport
