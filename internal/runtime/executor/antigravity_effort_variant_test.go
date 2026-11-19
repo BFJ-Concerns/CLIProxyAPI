@@ -51,18 +51,22 @@ func registerAntigravityEffortVariantAuth(t *testing.T, authID string, ids ...st
 // catalogue id that serves it, at the effort the request asks for.
 func TestAntigravityExecutorSendsTheCatalogueIDForAModelsOwnName(t *testing.T) {
 	auth := registerAntigravityEffortVariantAuth(t, "ag-effort-variant-test", "claude-opus-5-5-high", "gemini-4-hydrogen-xhigh")
+	unregistered := auth.Clone()
+	unregistered.ID = "ag-effort-variant-home"
 	sseResponse := "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"OK\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":1,\"candidatesTokenCount\":1,\"totalTokenCount\":2}}}\n\n"
 	cases := []struct {
-		model, wantModel, level string
+		name, model, wantModel, level string
+		auth                          *cliproxyauth.Auth
 	}{
-		{"claude-opus-5-5", "claude-opus-5-5-high", "low"},
-		{"gemini-4-hydrogen", "gemini-4-hydrogen-xhigh", "medium"},
+		{"registered Claude", "claude-opus-5-5", "claude-opus-5-5-high", "low", auth},
+		{"registered Gemini", "gemini-4-hydrogen", "gemini-4-hydrogen-xhigh", "medium", auth},
+		{"unregistered Gemini", "gemini-4-hydrogen", "gemini-4-hydrogen-xhigh", "xhigh", unregistered},
 	}
 	for _, tc := range cases {
 		for _, stream := range []bool{false, true} {
-			name := tc.model + "/non_stream"
+			name := tc.name + "/non_stream"
 			if stream {
-				name = tc.model + "/stream"
+				name = tc.name + "/stream"
 			}
 			t.Run(name, func(t *testing.T) {
 				var capturedBody []byte
@@ -94,7 +98,7 @@ func TestAntigravityExecutorSendsTheCatalogueIDForAModelsOwnName(t *testing.T) {
 				}
 
 				if stream {
-					res, errStream := executor.ExecuteStream(ctx, auth, req, opts)
+					res, errStream := executor.ExecuteStream(ctx, tc.auth, req, opts)
 					if errStream != nil {
 						t.Fatalf("ExecuteStream() error = %v", errStream)
 					}
@@ -103,7 +107,7 @@ func TestAntigravityExecutorSendsTheCatalogueIDForAModelsOwnName(t *testing.T) {
 							t.Fatalf("stream chunk error = %v", chunk.Err)
 						}
 					}
-				} else if _, errExec := executor.Execute(ctx, auth, req, opts); errExec != nil {
+				} else if _, errExec := executor.Execute(ctx, tc.auth, req, opts); errExec != nil {
 					t.Fatalf("Execute() error = %v", errExec)
 				}
 
