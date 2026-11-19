@@ -54,11 +54,11 @@ func TestGetAvailableModelsClaudeIncludesTokenLimits(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected claude-no-limits in available models, got %v", byID)
 	}
-	if got := withDefaults["max_input_tokens"]; got != DefaultClaudeMaxInputTokens {
-		t.Fatalf("expected fallback max_input_tokens %d, got %v", DefaultClaudeMaxInputTokens, got)
+	if got, ok := withDefaults["max_input_tokens"]; ok {
+		t.Fatalf("expected unknown max_input_tokens to be absent, got %v", got)
 	}
-	if got := withDefaults["max_tokens"]; got != DefaultClaudeMaxOutputTokens {
-		t.Fatalf("expected fallback max_tokens %d, got %v", DefaultClaudeMaxOutputTokens, got)
+	if got, ok := withDefaults["max_tokens"]; ok {
+		t.Fatalf("expected unknown max_tokens to be absent, got %v", got)
 	}
 	if got := withDefaults["display_name"]; got != "claude-no-limits" {
 		t.Fatalf("expected display_name to fall back to id, got %v", got)

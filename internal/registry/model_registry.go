@@ -43,6 +43,9 @@ type ModelInfo struct {
 	// MetadataModelID identifies the canonical model used to resolve client metadata.
 	// It is internal and must not be exposed in model-list responses.
 	MetadataModelID string `json:"-"`
+	// EffortVariantOf names the model this entry serves at one reasoning
+	// effort. Such an entry stays requestable but is left out of model lists.
+	EffortVariantOf string `json:"-"`
 	// ExplicitThinking indicates thinking/reasoning configuration was explicitly configured for this model.
 	ExplicitThinking bool `json:"-"`
 	// ExplicitInputModalities indicates input modalities were explicitly configured for this model.
@@ -1650,7 +1653,7 @@ func (r *ModelRegistry) GetAvailableModelInfos() []*ModelInfo {
 	result := make([]*ModelInfo, 0, len(r.models))
 	for _, registration := range r.models {
 		available, _ := modelRegistrationAvailability(registration, now)
-		if !available || registration == nil || registration.Info == nil {
+		if !available || registration == nil || registration.Info == nil || !registrationListed(registration) {
 			continue
 		}
 		result = append(result, cloneModelInfo(registration.Info))
@@ -1670,12 +1673,13 @@ func (r *ModelRegistry) buildAvailableModelsLocked(handlerType string, now time.
 		if !registrationExpiresAt.IsZero() && (expiresAt.IsZero() || registrationExpiresAt.Before(expiresAt)) {
 			expiresAt = registrationExpiresAt
 		}
-		if !available || registration == nil {
+		if !available || registration == nil || !registrationListed(registration) {
 			continue
 		}
 
 		model := r.convertModelToMap(registration.Info, handlerType)
 		if model != nil {
+			addModelListDetails(model, listedModelInfo(registration), handlerType)
 			models = append(models, model)
 		}
 	}

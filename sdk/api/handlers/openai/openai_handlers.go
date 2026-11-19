@@ -100,6 +100,7 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 			filteredModel["owned_by"] = ownedBy
 		}
 
+		copyModelListDetails(filteredModel, model)
 		filteredModels[i] = filteredModel
 	}
 

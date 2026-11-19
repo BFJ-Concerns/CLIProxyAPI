@@ -1113,6 +1113,10 @@ func (m *Manager) pickHomeDispatchSelection(ctx context.Context, model string, o
 		RequestedModel:     stringMetadataValue(opts.Metadata, cliproxyexecutor.RequestedModelMetadataKey),
 	})
 	credentialPolicy := credentialPolicyFromContext(ctx)
+	// Home is asked for the catalogue id that serves the route model, while
+	// the execution session stays keyed by the route model callers hold.
+	routeModel := requestedModel
+	requestedModel = homeDispatchModel(ctx, client, routeModel, dispatchHeaders, opts)
 	var raw []byte
 	var errRPop error
 	if hierarchyClient, okHierarchy := client.(homeDispatchSessionHierarchyDispatcher); okHierarchy {
@@ -1311,7 +1315,7 @@ func (m *Manager) pickHomeDispatchSelection(ctx context.Context, model string, o
 		selection.accountedModel = envelope.Tuple.Model
 	}
 	if executionSessionID := homeExecutionSessionIDFromMetadata(opts.Metadata); executionSessionID != "" && cliproxyexecutor.DownstreamWebsocket(ctx) {
-		if errEnd := m.endMismatchedHomeSessionSelections(ctx, executionSessionID, strings.TrimSpace(auth.ID), requestedModel, true); errEnd != nil {
+		if errEnd := m.endMismatchedHomeSessionSelections(ctx, executionSessionID, strings.TrimSpace(auth.ID), routeModel, true); errEnd != nil {
 			selection.End("target_change_release_failed")
 			return nil, errEnd
 		}

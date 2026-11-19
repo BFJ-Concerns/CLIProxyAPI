@@ -2768,11 +2768,11 @@ func TestFormatHomeClaudeModelIncludesAnthropicSchemaFields(t *testing.T) {
 	if got := customModel["display_name"]; got != "GPT-4o" {
 		t.Fatalf("display_name = %v, want GPT-4o", got)
 	}
-	if got := withDefaults["max_input_tokens"]; got != registry.DefaultClaudeMaxInputTokens {
-		t.Fatalf("max_input_tokens fallback = %v, want %d", got, registry.DefaultClaudeMaxInputTokens)
+	if got, ok := withDefaults["max_input_tokens"]; ok {
+		t.Fatalf("unknown max_input_tokens = %v, want absent", got)
 	}
-	if got := withDefaults["max_tokens"]; got != registry.DefaultClaudeMaxOutputTokens {
-		t.Fatalf("max_tokens fallback = %v, want %d", got, registry.DefaultClaudeMaxOutputTokens)
+	if got, ok := withDefaults["max_tokens"]; ok {
+		t.Fatalf("unknown max_tokens = %v, want absent", got)
 	}
 	if _, ok := withDefaults["created_at"]; ok {
 		t.Fatalf("created_at should be omitted when source created is missing, got %v", withDefaults)

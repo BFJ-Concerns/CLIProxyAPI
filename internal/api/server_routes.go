@@ -1098,6 +1098,7 @@ func (s *Server) handleHomeModels(c *gin.Context) {
 	if !ok {
 		return
 	}
+	entries = foldHomeEffortVariants(entries)
 
 	isClaude := isAnthropicModelsRequest(c)
 
@@ -1120,6 +1121,7 @@ func (s *Server) handleHomeModels(c *gin.Context) {
 		if entry.ownedBy != "" {
 			model["owned_by"] = entry.ownedBy
 		}
+		addHomeModelListDetails(model, entry, "openai")
 		filtered = append(filtered, model)
 	}
 	s.writeModelListResponse(c, "openai", gin.H{
@@ -1161,6 +1163,7 @@ func formatHomeClaudeModel(entry homeModelEntry) map[string]any {
 	if entry.created > 0 {
 		model["created_at"] = time.Unix(entry.created, 0).UTC().Format(time.RFC3339)
 	}
+	addHomeModelListDetails(model, entry, "claude")
 	return model
 }
 
@@ -1169,6 +1172,7 @@ func (s *Server) handleHomeGeminiModels(c *gin.Context) {
 	if !ok {
 		return
 	}
+	entries = foldHomeEffortVariants(entries)
 
 	s.writeModelListResponse(c, "gemini", gin.H{
 		"models": formatHomeGeminiModels(entries),
@@ -1180,6 +1184,7 @@ func (s *Server) handleHomeGeminiModel(c *gin.Context) {
 	if !ok {
 		return
 	}
+	entries = foldHomeEffortVariants(entries)
 
 	action := strings.TrimPrefix(c.Param("action"), "/")
 	action = strings.TrimSpace(action)
@@ -1277,6 +1282,7 @@ func formatHomeGeminiModel(entry homeModelEntry) map[string]any {
 	if entry.maxCompletionTokens > 0 {
 		model["outputTokenLimit"] = entry.maxCompletionTokens
 	}
+	addHomeModelListDetails(model, entry, "gemini")
 	return model
 }
 
