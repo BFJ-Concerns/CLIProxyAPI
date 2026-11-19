@@ -56,3 +56,36 @@ func TestHomeModelListsDescribeEachModel(t *testing.T) {
 		t.Fatalf("a model Home says nothing about is described as reasoning or not: %v", unstated)
 	}
 }
+
+func TestHomeModelListsShowEveryEffortAnyRouteAccepts(t *testing.T) {
+	entries, errDecode := decodeHomeModels([]byte(`{
+		"antigravity": [{"id": "shared-model", "thinking": {"levels": ["low", "high"]}}],
+		"codex": [{"id": "shared-model", "thinking": {"levels": ["max"]}}]
+	}`))
+	if errDecode != nil {
+		t.Fatalf("decodeHomeModels: %v", errDecode)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	want := []string{"low", "high", "max"}
+
+	openai := map[string]any{"id": "shared-model"}
+	addHomeModelListDetails(openai, entries[0], "openai")
+	if got := openai["reasoning"].(map[string]any)["efforts"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("openai efforts = %v, want %v", got, want)
+	}
+	if got := formatHomeClaudeModel(entries[0])["reasoning"].(map[string]any)["efforts"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("claude efforts = %v, want %v", got, want)
+	}
+	if got := formatHomeGeminiModel(entries[0])["reasoning"].(map[string]any)["efforts"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("gemini efforts = %v, want %v", got, want)
+	}
+
+	claude := formatHomeClaudeModel(entries[0])
+	for _, key := range []string{"max_input_tokens", "max_tokens"} {
+		if got, ok := claude[key]; ok {
+			t.Fatalf("Anthropic entry guesses %s = %v for a model Home gives no limit", key, got)
+		}
+	}
+}

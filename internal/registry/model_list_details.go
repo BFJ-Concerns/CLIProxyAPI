@@ -165,7 +165,6 @@ func listedModelInfo(registration *ModelRegistration) *ModelInfo {
 	}
 	info := registration.Info
 	var supports []*ThinkingSupport
-	userDefined := info.UserDefined
 	if info.Thinking != nil {
 		supports = append(supports, info.Thinking)
 	}
@@ -177,14 +176,28 @@ func listedModelInfo(registration *ModelRegistration) *ModelInfo {
 			supports = append(supports, providerInfo.Thinking)
 		}
 	}
-	if len(supports) <= 1 && (info.Thinking != nil || len(supports) == 0) {
+	if len(supports) == 0 || (len(supports) == 1 && info.Thinking != nil) {
 		return info
 	}
 	combined := cloneModelInfo(info)
-	combined.UserDefined = userDefined
-	merged := ThinkingSupport{}
+	combined.Thinking = CombineThinkingSupport(supports)
+	return combined
+}
+
+// CombineThinkingSupport describes the reasoning a model accepts across the
+// providers that serve it: every level any of them accepts, the widest budget
+// range, and an off switch or dynamic budget if any of them has one. It
+// returns nil when no provider states thinking support.
+func CombineThinkingSupport(supports []*ThinkingSupport) *ThinkingSupport {
+	var merged *ThinkingSupport
 	accepted := make(map[string]bool)
 	for _, support := range supports {
+		if support == nil {
+			continue
+		}
+		if merged == nil {
+			merged = &ThinkingSupport{DisableType: support.DisableType}
+		}
 		for _, level := range support.Levels {
 			accepted[strings.ToLower(level)] = true
 		}
@@ -197,9 +210,8 @@ func listedModelInfo(registration *ModelRegistration) *ModelInfo {
 		merged.ZeroAllowed = merged.ZeroAllowed || support.ZeroAllowed
 		merged.DynamicAllowed = merged.DynamicAllowed || support.DynamicAllowed
 	}
-	if len(accepted) > 0 {
+	if merged != nil && len(accepted) > 0 {
 		merged.Levels = orderedLevels(accepted)
 	}
-	combined.Thinking = &merged
-	return combined
+	return merged
 }
