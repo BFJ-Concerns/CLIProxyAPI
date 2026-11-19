@@ -1,28 +1,35 @@
 package registry
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // A credential that serves a model under its own name takes precedence over a
-// folded entry another credential made for the same name from effort-named
-// catalogue ids. While any credential registers the name as itself, the
+// folded entry a credential of another provider made for the same name from
+// effort-named catalogue ids. While a credential of another provider registers
+// the name as itself, the
 // folded entries for it are held back: they are not registered, so the name is
 // routed, listed and described only by the credentials that serve it under
 // that name, while the effort-named ids they were made from stay registered
 // and requestable. Once no such credential remains, the held-back entries are
-// registered again. The registry re-decides this whenever a credential's
+// registered again. Credentials of the holder's own provider do not hold its
+// folded entries back: an alias another Antigravity credential gives the name
+// shares the name with the fold rather than taking it. The registry re-decides this whenever a credential's
 // models change, so the outcome does not depend on registration order.
 
 // holdBackShadowedFoldsLocked records which of a registering client's folded
-// entries another client serves under its own name, and returns the models
-// that are to be registered now.
-func (r *ModelRegistry) holdBackShadowedFoldsLocked(clientID string, models []*ModelInfo) []*ModelInfo {
+// entries a client of another provider serves under its own name, and returns
+// the models that are to be registered now.
+func (r *ModelRegistry) holdBackShadowedFoldsLocked(clientID, clientProvider string, models []*ModelInfo) []*ModelInfo {
+	provider := strings.ToLower(clientProvider)
 	r.forgetFoldsLocked(clientID)
 	kept := make([]*ModelInfo, 0, len(models))
 	var heldBack []*ModelInfo
 	for _, model := range models {
 		if model != nil && model.EffortFolded && model.ID != "" {
 			r.addFoldHolderLocked(model.ID, clientID)
-			if r.ownNameServedLocked(model.ID, clientID) {
+			if r.ownNameServedLocked(model.ID, clientID, provider) {
 				heldBack = append(heldBack, model)
 				continue
 			}
@@ -72,11 +79,12 @@ func (r *ModelRegistry) removeFoldHolderLocked(modelID, clientID string) {
 	}
 }
 
-// ownNameServedLocked reports whether a client other than exceptClientID
-// registers modelID as a model of its own rather than a folded entry.
-func (r *ModelRegistry) ownNameServedLocked(modelID, exceptClientID string) bool {
+// ownNameServedLocked reports whether a client other than exceptClientID,
+// and of a provider other than exceptProvider, registers modelID as a model of
+// its own rather than a folded entry.
+func (r *ModelRegistry) ownNameServedLocked(modelID, exceptClientID, exceptProvider string) bool {
 	for clientID, infos := range r.clientModelInfos {
-		if clientID == exceptClientID {
+		if clientID == exceptClientID || r.clientProviders[clientID] == exceptProvider {
 			continue
 		}
 		if _, registered := r.clientModels[clientID]; !registered {
@@ -145,10 +153,11 @@ func (r *ModelRegistry) trackOwnNamesLocked(clientID string) func() {
 	}
 }
 
-// redecideFoldsLocked registers a client's folded entries that no other client
-// now serves under its own name and holds back those another client now does,
-// keeping the state of the client's other models.
+// redecideFoldsLocked registers a client's folded entries that no client of
+// another provider now serves under its own name and holds back those one now
+// does, keeping the state of the client's other models.
 func (r *ModelRegistry) redecideFoldsLocked(clientID string) {
+	provider := r.clientProviders[clientID]
 	modelIDs, registered := r.clientModels[clientID]
 	if !registered {
 		return
@@ -156,12 +165,12 @@ func (r *ModelRegistry) redecideFoldsLocked(clientID string) {
 	infos := r.clientModelInfos[clientID]
 	changed := false
 	for _, held := range r.heldBackFolds[clientID] {
-		if !r.ownNameServedLocked(held.ID, clientID) {
+		if !r.ownNameServedLocked(held.ID, clientID, provider) {
 			changed = true
 		}
 	}
 	for modelID, info := range infos {
-		if info != nil && info.EffortFolded && r.ownNameServedLocked(modelID, clientID) {
+		if info != nil && info.EffortFolded && r.ownNameServedLocked(modelID, clientID, provider) {
 			changed = true
 		}
 	}
@@ -175,5 +184,5 @@ func (r *ModelRegistry) redecideFoldsLocked(clientID string) {
 		}
 	}
 	models = append(models, r.heldBackFolds[clientID]...)
-	r.registerClientLocked(clientID, r.clientProviders[clientID], models, true)
+	r.registerClientLocked(clientID, provider, models, true)
 }

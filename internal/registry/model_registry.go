@@ -535,7 +535,7 @@ func (r *ModelRegistry) ReplaceClientModels(clientID, clientProvider string, exp
 // registerClientLocked reconciles a client's models while the registry mutex is held.
 func (r *ModelRegistry) registerClientLocked(clientID, clientProvider string, models []*ModelInfo, preserveState bool) {
 	defer r.trackOwnNamesLocked(clientID)()
-	models = r.holdBackShadowedFoldsLocked(clientID, models)
+	models = r.holdBackShadowedFoldsLocked(clientID, clientProvider, models)
 	r.ensureAvailableModelsCacheLocked()
 
 	if r.clientGenerations == nil {
