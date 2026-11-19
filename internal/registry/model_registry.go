@@ -1594,6 +1594,10 @@ func clientQuotaRecoveryAt(registration *ModelRegistration, clientID string, quo
 }
 
 func modelRegistrationAvailability(registration *ModelRegistration, now time.Time) (bool, time.Time) {
+	return modelRegistrationAvailabilityWithQuotaFallback(registration, now, true)
+}
+
+func modelRegistrationAvailabilityWithQuotaFallback(registration *ModelRegistration, now time.Time, keepQuotaLimited bool) (bool, time.Time) {
 	if registration == nil {
 		return false, time.Time{}
 	}
@@ -1644,7 +1648,7 @@ func modelRegistrationAvailability(registration *ModelRegistration, now time.Tim
 		effectiveClients = 0
 	}
 
-	available := effectiveClients > 0 || (availableClients > 0 && (expiredClients > 0 || cooldownSuspended > 0) && otherSuspended == 0)
+	available := effectiveClients > 0 || (keepQuotaLimited && availableClients > 0 && (expiredClients > 0 || cooldownSuspended > 0) && otherSuspended == 0)
 	return available, expiresAt
 }
 

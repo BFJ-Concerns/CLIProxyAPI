@@ -45,3 +45,44 @@ func TestGeminiGetHandlerFindsAnEffortNamedID(t *testing.T) {
 		t.Fatalf("GET of an unregistered id status = %d", recorder.Code)
 	}
 }
+
+func TestGeminiGetHandlerRequiresAnAvailableCredentialForAHiddenEffortNamedID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const (
+		modelID = "lookup-availability-model-xhigh"
+		first   = "gemini-get-availability-first"
+		second  = "gemini-get-availability-second"
+	)
+	registryRef := registry.GetGlobalRegistry()
+	models := registry.FoldEffortVariants([]*registry.ModelInfo{{
+		ID: modelID, Thinking: &registry.ThinkingSupport{Levels: []string{"xhigh"}},
+	}})
+	for _, clientID := range []string{first, second} {
+		registryRef.RegisterClient(clientID, "antigravity", models)
+		t.Cleanup(func() { registryRef.UnregisterClient(clientID) })
+	}
+
+	router := gin.New()
+	router.GET("/v1beta/models/*action", NewGeminiAPIHandler(&handlers.BaseAPIHandler{}).GeminiGetHandler)
+	assertStatus := func(want int) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1beta/models/"+modelID, nil))
+		if recorder.Code != want {
+			t.Fatalf("GET %s status = %d, want %d. Body: %s", modelID, recorder.Code, want, recorder.Body.String())
+		}
+	}
+
+	registryRef.SetModelQuotaExceeded(first, modelID)
+	assertStatus(http.StatusOK)
+	registryRef.SetModelQuotaExceeded(second, modelID)
+	assertStatus(http.StatusNotFound)
+	registryRef.ClearModelQuotaExceeded(second, modelID)
+	registryRef.SuspendClientModel(second, modelID, "manual")
+	assertStatus(http.StatusNotFound)
+	registryRef.ClearModelQuotaExceeded(first, modelID)
+	registryRef.SuspendClientModel(first, modelID, "manual")
+	assertStatus(http.StatusNotFound)
+	registryRef.ResumeClientModel(first, modelID)
+	assertStatus(http.StatusOK)
+}

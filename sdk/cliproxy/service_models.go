@@ -129,22 +129,21 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 		models = registry.GetAIStudioModels()
 		models = applyExcludedModels(models, excluded)
 	case "antigravity":
-		if !(cfg != nil && cfg.Home.Enabled) {
-			expectedRegEpoch := GlobalModelRegistry().ClientRegistrationEpoch(a.ID)
-			expectedKey := s.antigravityCapabilityKey(a)
-			hints := s.cachedAntigravityHints(a)
-			if hints.ModelIDs != nil {
-				// Publish known catalogs through the same fenced, state-preserving
-				// path as refreshes. An expired catalog remains usable while HTTP
-				// is pending, including its quota and suspension projections.
-				s.applyAntigravityModelHints(ctx, a, provider, hints, expectedKey, a.RegistrationEpoch, expectedRegEpoch)
-				s.asyncProbeAntigravityCapabilities(ctx, a, provider)
-				return true
-			}
-		} else {
-			models = registry.GetAntigravityModels()
+		if cfg != nil && cfg.Home.Enabled {
+			models = s.prepareAntigravityRegistration(a, cfg, registry.GetAntigravityModels(), excluded)
+			return s.registerResolvedModelsForAuthFenced(a, fence, provider, models)
 		}
-		models = applyExcludedModels(models, excluded)
+		expectedRegEpoch := GlobalModelRegistry().ClientRegistrationEpoch(a.ID)
+		expectedKey := s.antigravityCapabilityKey(a)
+		hints := s.cachedAntigravityHints(a)
+		if hints.ModelIDs != nil {
+			// Publish known catalogs through the same fenced, state-preserving
+			// path as refreshes. An expired catalog remains usable while HTTP
+			// is pending, including its quota and suspension projections.
+			s.applyAntigravityModelHints(ctx, a, provider, hints, expectedKey, a.RegistrationEpoch, expectedRegEpoch)
+			s.asyncProbeAntigravityCapabilities(ctx, a, provider)
+			return true
+		}
 	case "claude":
 		models = registry.GetClaudeModels()
 		if entry := resolveConfigClaudeKeyForConfig(cfg, a); entry != nil {

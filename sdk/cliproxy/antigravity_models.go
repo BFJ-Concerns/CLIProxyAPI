@@ -520,13 +520,18 @@ func (s *Service) antigravityModelsForHintsWithConfig(auth *coreauth.Auth, hints
 	if value := strings.TrimSpace(auth.Attributes["excluded_models"]); value != "" {
 		excluded = strings.Split(value, ",")
 	}
+	return s.prepareAntigravityRegistration(auth, cfg, models, excluded)
+}
+
+func (s *Service) prepareAntigravityRegistration(auth *coreauth.Auth, cfg *config.Config, models []*ModelInfo, excluded []string) []*ModelInfo {
+	authKind := auth.AuthKind()
 	models = applyExcludedModels(models, excluded)
-	models = applyOAuthModelAliasForAuth(cfg, "antigravity", auth.AuthKind(), auth.Attributes, models)
+	models = applyOAuthModelAliasForAuth(cfg, "antigravity", authKind, auth.Attributes, models)
 	models = registry.FoldEffortVariantsUnless(models, func(ownName string) bool {
 		return len(applyExcludedModels([]*ModelInfo{{ID: ownName}}, excluded)) == 0
 	})
 	models = s.appendPluginModels("antigravity", models, excluded)
-	models = applyOAuthSettingsForAuth(cfg, "antigravity", auth.AuthKind(), models)
+	models = applyOAuthSettingsForAuth(cfg, "antigravity", authKind, models)
 	return applyModelPrefixes(models, auth.Prefix, cfg.ForceModelPrefix)
 }
 
