@@ -7,25 +7,40 @@ import "strings"
 // A field is left out when the registry holds no value for it.
 
 // addModelListDetails adds the description fields to entry, a model-list
-// entry already built for handlerType ("openai", "claude" or "gemini").
+// entry already built for handlerType ("openai", "claude" or "gemini") from a
+// registered model.
 func addModelListDetails(entry map[string]any, info *ModelInfo, handlerType string) {
+	if info == nil {
+		return
+	}
+	AddModelListDetails(entry, info, handlerType, info.UserDefined)
+}
+
+// AddModelListDetails adds the description fields of info to entry, a
+// model-list entry built for handlerType ("openai", "claude" or "gemini").
+// unsetThinkingIsUnknown says what a nil info.Thinking means: true when the
+// source may simply not have said, so reasoning is left out; false when the
+// proxy treats the model as not reasoning, so it is described that way.
+func AddModelListDetails(entry map[string]any, info *ModelInfo, handlerType string, unsetThinkingIsUnknown bool) {
 	if entry == nil || info == nil {
 		return
 	}
 	switch handlerType {
 	case "openai":
+		setPositiveInt(entry, "context_length", info.ContextLength)
+		setPositiveInt(entry, "max_completion_tokens", info.MaxCompletionTokens)
 		setPositiveInt(entry, "input_token_limit", info.InputTokenLimit)
 		setPositiveInt(entry, "output_token_limit", info.OutputTokenLimit)
 		setStringList(entry, "input_modalities", info.SupportedInputModalities)
 		setStringList(entry, "output_modalities", info.SupportedOutputModalities)
-		if reasoning := reasoningDescription(info, snakeCaseReasoningKeys); reasoning != nil {
+		if reasoning := reasoningDescription(info, snakeCaseReasoningKeys, unsetThinkingIsUnknown); reasoning != nil {
 			entry["reasoning"] = reasoning
 		}
 	case "claude":
 		setPositiveInt(entry, "context_length", info.ContextLength)
 		setStringList(entry, "input_modalities", info.SupportedInputModalities)
 		setStringList(entry, "output_modalities", info.SupportedOutputModalities)
-		reasoning := reasoningDescription(info, snakeCaseReasoningKeys)
+		reasoning := reasoningDescription(info, snakeCaseReasoningKeys, unsetThinkingIsUnknown)
 		if reasoning != nil {
 			entry["reasoning"] = reasoning
 		}
@@ -33,7 +48,7 @@ func addModelListDetails(entry map[string]any, info *ModelInfo, handlerType stri
 			entry["capabilities"] = capabilities
 		}
 	case "gemini":
-		if reasoning := reasoningDescription(info, camelCaseReasoningKeys); reasoning != nil {
+		if reasoning := reasoningDescription(info, camelCaseReasoningKeys, unsetThinkingIsUnknown); reasoning != nil {
 			entry["reasoning"] = reasoning
 			entry["thinking"] = reasoning["supported"]
 		}
@@ -53,14 +68,14 @@ var (
 )
 
 // reasoningDescription describes the model's reasoning as the proxy applies
-// it. A model without thinking support has its reasoning settings stripped,
-// so it is described as not reasoning; a user-defined model without thinking
-// support passes settings through untouched, so nothing is known and nil is
-// returned.
-func reasoningDescription(info *ModelInfo, keys reasoningKeys) map[string]any {
+// it. A catalogue model without thinking support has its reasoning settings
+// stripped, so it is described as not reasoning; where a nil Thinking means
+// nothing is known (a user-defined model's settings pass through untouched),
+// nil is returned.
+func reasoningDescription(info *ModelInfo, keys reasoningKeys, unsetThinkingIsUnknown bool) map[string]any {
 	support := info.Thinking
 	if support == nil {
-		if info.UserDefined {
+		if unsetThinkingIsUnknown {
 			return nil
 		}
 		return map[string]any{"supported": false}
@@ -131,4 +146,52 @@ func containsFold(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// listedModelInfo is the model a list entry describes. A model several
+// providers serve accepts every effort any of them accepts, so the thinking
+// support of every provider still serving it is combined.
+func listedModelInfo(registration *ModelRegistration) *ModelInfo {
+	if registration == nil || registration.Info == nil {
+		return nil
+	}
+	info := registration.Info
+	var supports []*ThinkingSupport
+	userDefined := info.UserDefined
+	if info.Thinking != nil {
+		supports = append(supports, info.Thinking)
+	}
+	for provider, providerInfo := range registration.InfoByProvider {
+		if providerInfo == nil || providerInfo == info || registration.Providers[provider] <= 0 {
+			continue
+		}
+		if providerInfo.Thinking != nil {
+			supports = append(supports, providerInfo.Thinking)
+		}
+	}
+	if len(supports) <= 1 && (info.Thinking != nil || len(supports) == 0) {
+		return info
+	}
+	combined := cloneModelInfo(info)
+	combined.UserDefined = userDefined
+	merged := ThinkingSupport{}
+	accepted := make(map[string]bool)
+	for _, support := range supports {
+		for _, level := range support.Levels {
+			accepted[strings.ToLower(level)] = true
+		}
+		if support.Min > 0 && (merged.Min == 0 || support.Min < merged.Min) {
+			merged.Min = support.Min
+		}
+		if support.Max > merged.Max {
+			merged.Max = support.Max
+		}
+		merged.ZeroAllowed = merged.ZeroAllowed || support.ZeroAllowed
+		merged.DynamicAllowed = merged.DynamicAllowed || support.DynamicAllowed
+	}
+	if len(accepted) > 0 {
+		merged.Levels = orderedLevels(accepted)
+	}
+	combined.Thinking = &merged
+	return combined
 }

@@ -1679,7 +1679,7 @@ func (r *ModelRegistry) buildAvailableModelsLocked(handlerType string, now time.
 
 		model := r.convertModelToMap(registration.Info, handlerType)
 		if model != nil {
-			addModelListDetails(model, registration.Info, handlerType)
+			addModelListDetails(model, listedModelInfo(registration), handlerType)
 			models = append(models, model)
 		}
 	}

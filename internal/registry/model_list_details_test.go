@@ -141,3 +141,26 @@ func TestGeminiModelListDescribesEachModel(t *testing.T) {
 		t.Fatalf("user-defined model has thinking the registry does not hold: %v", listed["user-model"])
 	}
 }
+
+func TestModelListShowsEveryEffortAnyProviderAccepts(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("compat-a", "compat-a", []*ModelInfo{{ID: "shared-model", Thinking: &ThinkingSupport{Levels: []string{"low", "high"}}}})
+	r.RegisterClient("compat-b", "compat-b", []*ModelInfo{{ID: "shared-model", Thinking: &ThinkingSupport{Levels: []string{"max"}}}})
+	r.RegisterClient("compat-c", "compat-c", []*ModelInfo{{ID: "shared-model"}})
+
+	want := []string{"low", "high", "max"}
+	openai := listedByKey(r.GetAvailableModels("openai"), "id")["shared-model"]
+	if got := openai["reasoning"].(map[string]any)["efforts"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("openai efforts = %v, want %v", got, want)
+	}
+	gemini := listedByKey(r.GetAvailableModels("gemini"), "name")["shared-model"]
+	if got := gemini["reasoning"].(map[string]any)["efforts"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("gemini efforts = %v, want %v", got, want)
+	}
+
+	r.UnregisterClient("compat-b")
+	openai = listedByKey(r.GetAvailableModels("openai"), "id")["shared-model"]
+	if got := openai["reasoning"].(map[string]any)["efforts"]; !reflect.DeepEqual(got, []string{"low", "high"}) {
+		t.Fatalf("efforts after a provider left = %v", got)
+	}
+}
