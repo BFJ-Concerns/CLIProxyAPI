@@ -206,3 +206,26 @@ func TestAnAntigravityAliasDoesNotKeepAnotherAntigravityFoldFromReturning(t *tes
 		t.Fatal("the aliased credential stopped serving its name")
 	}
 }
+
+func TestAClientChangingProviderRedecidesTheFoldsOfTheNamesItServes(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("switching", "antigravity", []*ModelInfo{
+		{ID: "claude-opus-5-5", MetadataModelID: "claude-opus-5-5-high", OwnedBy: "antigravity"},
+	})
+	r.RegisterClient("antigravity-1", "antigravity", antigravityCatalogue())
+	if !r.ClientSupportsModel("antigravity-1", "claude-opus-5-5") {
+		t.Fatal("an Antigravity alias of the name held the fold back")
+	}
+
+	r.RegisterClient("switching", "claude", claudeOwnNames())
+	if r.ClientSupportsModel("antigravity-1", "claude-opus-5-5") {
+		t.Fatal("the fold kept the name after the credential serving it became another provider's")
+	}
+
+	r.RegisterClient("switching", "antigravity", []*ModelInfo{
+		{ID: "claude-opus-5-5", MetadataModelID: "claude-opus-5-5-high", OwnedBy: "antigravity"},
+	})
+	if !r.ClientSupportsModel("antigravity-1", "claude-opus-5-5") {
+		t.Fatal("the fold stayed held back after the credential serving the name became Antigravity's")
+	}
+}

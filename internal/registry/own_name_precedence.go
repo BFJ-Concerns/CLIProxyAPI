@@ -118,19 +118,23 @@ func (r *ModelRegistry) ownNamesOverFoldsLocked(clientID string) map[string]stru
 
 // trackOwnNamesLocked notes the names a client serves over folded entries and
 // returns a function that, once the client's registration has changed,
-// re-decides the folded entries for every name it started or stopped serving.
+// re-decides the folded entries for every name it started or stopped serving,
+// and for every name it serves when its provider changed, since the provider
+// decides whose folded entries the name holds back.
 func (r *ModelRegistry) trackOwnNamesLocked(clientID string) func() {
 	before := r.ownNamesOverFoldsLocked(clientID)
+	providerBefore := r.clientProviders[clientID]
 	return func() {
 		after := r.ownNamesOverFoldsLocked(clientID)
+		providerChanged := r.clientProviders[clientID] != providerBefore
 		affected := make(map[string]struct{})
 		for modelID := range before {
-			if _, still := after[modelID]; !still {
+			if _, still := after[modelID]; !still || providerChanged {
 				affected[modelID] = struct{}{}
 			}
 		}
 		for modelID := range after {
-			if _, already := before[modelID]; !already {
+			if _, already := before[modelID]; !already || providerChanged {
 				affected[modelID] = struct{}{}
 			}
 		}
