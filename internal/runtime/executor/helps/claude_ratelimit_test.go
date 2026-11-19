@@ -580,8 +580,9 @@ func TestFableOnlyRejectionWithout5hHeadersStaysModelScoped_Issue7197(t *testing
 	if ClaudeHeadersIndicateUnifiedRateLimitRejection(headers) {
 		t.Fatal("Fable-only rejection with 7d allowed and omitted 5h headers was treated as credential-scoped (Issue #7197)")
 	}
+	// Fork: overage is disabled, so the model-scoped cooldown runs until the Fable window resets.
 	got := parseClaudeRateLimitResetWithFuzz(headers, now, 0, 0)
-	if got != nil {
-		t.Fatalf("cooldown = %v, want nil; Fable-only rejection must not adopt multi-day Retry-After or 7d_oi reset", *got)
+	if want := time.Unix(1794150000, 0).Sub(now); got == nil || *got != want {
+		t.Fatalf("cooldown = %v, want %v until the 7d_oi reset", got, want)
 	}
 }

@@ -298,6 +298,13 @@ func parseClaudeRateLimitResetWithFuzz(headers http.Header, now time.Time, minFu
 		}
 	}
 
+	// Fork: a Fable-window-only rejection holds the model until that window resets.
+	if overageOnlyRejection && claudeFableWindowOnlyRejection(headers, status7dOI) {
+		if resetAt, ok := claudeFableWindowReset(headers, now); ok {
+			candidateDeadlines = append(candidateDeadlines, resetAt)
+		}
+	}
+
 	// 5. Unified reset header:
 	unifiedRejected := !overageOnlyRejection && (unifiedStatus == "rejected" || status5h == "rejected" || status7d == "rejected" || status7dOI == "rejected" ||
 		(unifiedStatus == "" && !isClaudeWindowAllowed(status5h) && !isClaudeWindowAllowed(status7d)))

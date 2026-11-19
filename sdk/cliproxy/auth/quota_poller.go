@@ -331,6 +331,7 @@ func (p *quotaUsagePoller) poll(auth *Auth, now time.Time) {
 		return
 	}
 	p.finish(auth.ID, now, now.Add(quotaPollInterval(usage, now)), false, &usage)
+	p.manager.liftWindowBenches(auth.ID, usage, now, time.Now())
 	reportQuotaReading(auth, QuotaReading{PolledAt: now, Status: resp.StatusCode, Body: body})
 	log.Infof(
 		"quota usage polled auth=%s session=%s weekly=%s fable=%s",
