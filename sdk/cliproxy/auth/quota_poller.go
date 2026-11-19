@@ -14,7 +14,6 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"strconv"
@@ -22,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/json"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/proxyutil"
