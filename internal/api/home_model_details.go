@@ -53,15 +53,14 @@ func foldHomeEffortVariants(entries []homeModelEntry) []homeModelEntry {
 		byID[entry.id] = entry
 	}
 	folded := registry.FoldEffortVariants(infos)
-	if len(folded) == len(infos) {
-		return entries
-	}
-
 	variantsOf := make(map[string][]homeModelEntry)
 	for _, info := range folded {
 		if info.EffortVariantOf != "" {
 			variantsOf[info.EffortVariantOf] = append(variantsOf[info.EffortVariantOf], byID[info.ID])
 		}
+	}
+	if len(variantsOf) == 0 {
+		return entries
 	}
 	out := make([]homeModelEntry, 0, len(folded))
 	for _, info := range folded {

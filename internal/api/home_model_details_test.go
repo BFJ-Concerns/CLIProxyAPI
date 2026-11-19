@@ -191,3 +191,55 @@ func TestHomeModelListsShowEachModelOnceUnderItsOwnName(t *testing.T) {
 		t.Fatalf("single model = %v", single)
 	}
 }
+
+// A model Home serves under its own name as well as under an effort-named id
+// is listed once, under its own name, even when no new entry is folded.
+func TestHomeModelListsLeaveOutAnEffortNamedIDBesideItsOwnName(t *testing.T) {
+	server := newTestServer(t)
+	server.cfg.Home.Enabled = true
+	server.cfg.ClaudeCode.DisableCloakingModelList = true
+	engine := gin.New()
+	engine.GET("/v1/models", server.unifiedModelsHandler(nil, nil))
+	engine.GET("/v1beta/models", server.geminiModelsHandler(nil))
+
+	client := newHomeCatalogClient(t, `{
+		"antigravity": [{"id": "gemini-4-argon-high", "thinking": {"levels": ["high"]}}],
+		"gemini": [{"id": "gemini-4-argon", "thinking": {"levels": ["low", "medium", "high"]}}]
+	}`)
+	previousHome := home.Current()
+	home.SetCurrent(client)
+	t.Cleanup(func() { home.SetCurrent(previousHome) })
+
+	cases := []struct {
+		shape, path, header, listKey, idKey string
+	}{
+		{"openai", "/v1/models", "", "data", "id"},
+		{"anthropic", "/v1/models", "2023-06-01", "data", "id"},
+		{"gemini", "/v1beta/models", "", "models", "name"},
+	}
+	for _, tc := range cases {
+		request := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		if tc.header != "" {
+			request.Header.Set("Anthropic-Version", tc.header)
+		}
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s status = %d; body=%s", tc.shape, recorder.Code, recorder.Body.String())
+		}
+		var payload map[string]any
+		if errUnmarshal := json.Unmarshal(recorder.Body.Bytes(), &payload); errUnmarshal != nil {
+			t.Fatalf("%s decode: %v", tc.shape, errUnmarshal)
+		}
+		var ids []string
+		entries, _ := payload[tc.listKey].([]any)
+		for _, raw := range entries {
+			model, _ := raw.(map[string]any)
+			id, _ := model[tc.idKey].(string)
+			ids = append(ids, strings.TrimPrefix(id, "models/"))
+		}
+		if !reflect.DeepEqual(ids, []string{"gemini-4-argon"}) {
+			t.Fatalf("%s list = %v, want only gemini-4-argon", tc.shape, ids)
+		}
+	}
+}
