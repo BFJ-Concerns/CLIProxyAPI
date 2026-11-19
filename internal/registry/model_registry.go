@@ -226,6 +226,12 @@ type ModelRegistry struct {
 	registrationEpoch atomic.Uint64
 	// hook is an optional callback sink for model registration changes
 	hook ModelRegistryHook
+	// heldBackFolds maps client ID to the folded entries it supplied that are
+	// not registered, because another client serves the name as its own.
+	heldBackFolds map[string][]*ModelInfo
+	// foldHolders maps a folded entry's ID to the clients that supplied one,
+	// whether registered or held back.
+	foldHolders map[string]map[string]struct{}
 	// nowFunc overrides time.Now when set (used by deterministic tests).
 	nowFunc func() time.Time
 }
@@ -528,6 +534,8 @@ func (r *ModelRegistry) ReplaceClientModels(clientID, clientProvider string, exp
 
 // registerClientLocked reconciles a client's models while the registry mutex is held.
 func (r *ModelRegistry) registerClientLocked(clientID, clientProvider string, models []*ModelInfo, preserveState bool) {
+	defer r.trackOwnNamesLocked(clientID)()
+	models = r.holdBackShadowedFoldsLocked(clientID, clientProvider, models)
 	r.ensureAvailableModelsCacheLocked()
 
 	if r.clientGenerations == nil {
@@ -942,6 +950,8 @@ func (r *ModelRegistry) UnregisterClient(clientID string) {
 
 // unregisterClientInternal performs the actual client unregistration (internal, no locking)
 func (r *ModelRegistry) unregisterClientInternal(clientID string) {
+	defer r.trackOwnNamesLocked(clientID)()
+	r.forgetFoldsLocked(clientID)
 	if r.clientGenerations == nil {
 		r.clientGenerations = make(map[string]uint64)
 	}
