@@ -190,6 +190,16 @@ func TestHomeModelListsShowEachModelOnceUnderItsOwnName(t *testing.T) {
 	if single["name"] != "models/claude-opus-5-5" {
 		t.Fatalf("single model = %v", single)
 	}
+
+	// An effort-named id is left out of the lists but is still requestable,
+	// so a lookup of it still finds it.
+	var variant map[string]any
+	if errUnmarshal := json.Unmarshal(get("/v1beta/models/claude-opus-5-5-high", nil), &variant); errUnmarshal != nil {
+		t.Fatalf("decode effort-named model: %v", errUnmarshal)
+	}
+	if variant["name"] != "models/claude-opus-5-5-high" {
+		t.Fatalf("effort-named model = %v", variant)
+	}
 }
 
 // A model Home serves under its own name as well as under an effort-named id

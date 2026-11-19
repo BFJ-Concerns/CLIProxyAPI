@@ -340,3 +340,25 @@ func registrationListed(registration *ModelRegistration) bool {
 	}
 	return false
 }
+
+// GetAvailableModel returns the entry for one available model in the shape
+// handlerType's lists use, or nil. Unlike the lists it includes effort-named
+// ids, since a request may still name them.
+func (r *ModelRegistry) GetAvailableModel(handlerType, modelID string) map[string]any {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return nil
+	}
+	now := r.now()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+	registration := r.models[modelID]
+	if available, _ := modelRegistrationAvailability(registration, now); !available || registration == nil || registration.Info == nil {
+		return nil
+	}
+	model := r.convertModelToMap(registration.Info, handlerType)
+	if model != nil {
+		addModelListDetails(model, listedModelInfo(registration), handlerType)
+	}
+	return model
+}

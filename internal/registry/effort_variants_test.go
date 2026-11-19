@@ -274,3 +274,23 @@ func TestRegisteredEffortVariantForDecidesFromTheRegisteredModels(t *testing.T) 
 		})
 	}
 }
+
+func TestGetAvailableModelFindsAnEffortNamedIDTheListsLeaveOut(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("antigravity-lookup", "antigravity", FoldEffortVariants(effortVariantCatalogue()))
+
+	for _, handlerType := range []string{"openai", "claude", "gemini"} {
+		for _, id := range []string{"gemini-4-hydrogen-xhigh", "gemini-4-hydrogen"} {
+			model := r.GetAvailableModel(handlerType, id)
+			if model == nil {
+				t.Fatalf("%s lookup of %s found nothing", handlerType, id)
+			}
+		}
+	}
+	if model := r.GetAvailableModel("gemini", "gemini-4-hydrogen-xhigh"); model["reasoning"] == nil {
+		t.Fatalf("lookup entry is not described: %v", model)
+	}
+	if model := r.GetAvailableModel("gemini", "not-registered"); model != nil {
+		t.Fatalf("lookup of an unregistered id = %v", model)
+	}
+}
