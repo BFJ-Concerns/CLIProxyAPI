@@ -1098,6 +1098,7 @@ func (s *Server) handleHomeModels(c *gin.Context) {
 	if !ok {
 		return
 	}
+	entries = foldHomeEffortVariants(entries)
 
 	isClaude := isAnthropicModelsRequest(c)
 
@@ -1171,6 +1172,7 @@ func (s *Server) handleHomeGeminiModels(c *gin.Context) {
 	if !ok {
 		return
 	}
+	entries = foldHomeEffortVariants(entries)
 
 	s.writeModelListResponse(c, "gemini", gin.H{
 		"models": formatHomeGeminiModels(entries),
@@ -1182,6 +1184,7 @@ func (s *Server) handleHomeGeminiModel(c *gin.Context) {
 	if !ok {
 		return
 	}
+	entries = foldHomeEffortVariants(entries)
 
 	action := strings.TrimPrefix(c.Param("action"), "/")
 	action = strings.TrimSpace(action)
