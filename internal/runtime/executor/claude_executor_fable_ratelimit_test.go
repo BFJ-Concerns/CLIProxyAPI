@@ -886,11 +886,10 @@ func TestClaudeExecutor_AuthManager_FableOnlyRejectionWithout5hHeadersAllowsOpus
 	if fableState == nil {
 		t.Fatal("fable model state not found")
 	}
-	if fableState.Quota.NextRecoverAt.IsZero() || !fableState.Quota.NextRecoverAt.After(time.Now()) {
-		t.Fatal("fable model cooldown should be set in the future via exponential backoff")
-	}
-	if fableState.Quota.NextRecoverAt.After(time.Now().Add(10 * time.Minute)) {
-		t.Fatalf("fable model cooldown was %v; want exponential backoff (<10m), not ~6d weekly reset", fableState.Quota.NextRecoverAt)
+	// Fork: overage is disabled, so the Fable cooldown lasts until the 7d_oi window resets.
+	weeklyResetUnix, _ := strconv.ParseInt(weeklyReset, 10, 64)
+	if fableState.Quota.NextRecoverAt.Before(time.Unix(weeklyResetUnix, 0)) {
+		t.Fatalf("fable model cooldown was %v; want it to last until the 7d_oi reset %v", fableState.Quota.NextRecoverAt, time.Unix(weeklyResetUnix, 0))
 	}
 
 	payloadOpus := []byte(`{"model":"claude-opus-5-5","messages":[{"role":"user","content":[{"type":"text","text":"test"}]}]}`)
