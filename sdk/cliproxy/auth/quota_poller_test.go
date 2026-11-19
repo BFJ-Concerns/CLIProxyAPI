@@ -12,12 +12,13 @@ import (
 )
 
 type quotaPollerCountedTransport struct {
-	mu       sync.Mutex
-	requests int
-	issued   chan struct{}
-	status   int
-	header   http.Header
-	body     string
+	mu        sync.Mutex
+	requests  int
+	issued    chan struct{}
+	status    int
+	header    http.Header
+	body      string
+	onRequest func()
 }
 
 func (t *quotaPollerCountedTransport) RoundTrip(*http.Request) (*http.Response, error) {
@@ -25,6 +26,9 @@ func (t *quotaPollerCountedTransport) RoundTrip(*http.Request) (*http.Response, 
 	t.requests++
 	t.mu.Unlock()
 	t.issued <- struct{}{}
+	if t.onRequest != nil {
+		t.onRequest()
+	}
 	return &http.Response{
 		StatusCode: t.status,
 		Header:     t.header.Clone(),
@@ -212,6 +216,25 @@ func TestQuotaPollerFinishEnforcesCadenceFloor(t *testing.T) {
 	if got, want := p.schedule["acct-a"].nextPollAt, started.Add(30*time.Minute); !got.Equal(want) {
 		t.Fatalf("nextPollAt = %v, want %v", got, want)
 	}
+}
+
+func TestQuotaPollerSweepHonoursRetryAfter(t *testing.T) {
+	poller, transport, auth := newCountedQuotaPoller(t, http.StatusTooManyRequests, "")
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	retryAt := now.Add(10 * time.Minute)
+	transport.header = http.Header{"Retry-After": {"600"}}
+	poller.schedule[auth.ID] = &quotaPollSchedule{inFlight: true}
+
+	poller.poll(auth, now)
+	waitForQuotaPollerRequest(t, transport.issued)
+
+	poller.sweep(retryAt.Add(-time.Second))
+	if quotaPollerInFlight(poller, auth.ID) || transport.count() != 1 {
+		t.Fatal("sweep launched a second poll before Retry-After expired")
+	}
+
+	poller.sweep(retryAt)
+	waitForQuotaPollerRequest(t, transport.issued)
 }
 
 func TestQuotaPollerRestoresRetryAfterSuppression(t *testing.T) {
