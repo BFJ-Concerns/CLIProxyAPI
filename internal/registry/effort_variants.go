@@ -343,8 +343,8 @@ func registrationListed(registration *ModelRegistration) bool {
 }
 
 // GetAvailableModel returns the entry for one available model in the shape
-// handlerType's lists use, or nil. Unlike the lists it includes effort-named
-// ids, since a request may still name them.
+// handlerType's lists use, or nil. It also returns hidden effort-named ids
+// when at least one credential can serve them.
 func (r *ModelRegistry) GetAvailableModel(handlerType, modelID string) map[string]any {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
@@ -354,7 +354,13 @@ func (r *ModelRegistry) GetAvailableModel(handlerType, modelID string) map[strin
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 	registration := r.models[modelID]
-	if available, _ := modelRegistrationAvailability(registration, now); !available || registration == nil || registration.Info == nil {
+	if registration == nil || registration.Info == nil {
+		return nil
+	}
+	// The catalogue keeps listed models visible during a quota-only cooldown.
+	// A hidden effort-named id needs a credential that can serve it now.
+	available, _ := modelRegistrationAvailabilityWithQuotaFallback(registration, now, registrationListed(registration))
+	if !available {
 		return nil
 	}
 	model := r.convertModelToMap(registration.Info, handlerType)
